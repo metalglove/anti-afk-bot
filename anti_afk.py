@@ -1,21 +1,31 @@
 """Anti-AFK input bot.
 
 Usage:
-    python anti_afk.py [--mode fast|slow] [--autojoin] [--anti-kick]
+    python anti_afk.py [--mode fast|slow|human] [--autojoin] [--anti-kick]
 
 Hotkeys (work while the game has focus):
     F8  pause / resume (releases all held keys while paused)
     F9  stop (releases all held keys and exits)
 """
 import argparse
+import math
 import random
 import threading
+import time
 
 import pydirectinput
 from pynput.keyboard import Controller, Key, Listener
 
 # The mouse-corner failsafe misfires in games that lock the cursor; F9 replaces it.
 pydirectinput.FAILSAFE = False
+
+# Human mode: never stand still longer than this many seconds. Keep it well
+# below the game's AFK-kick timer.
+MAX_STILL = 20
+
+# Human mode: set to True if the camera doesn't turn in-game (sends raw
+# relative mouse input instead of moving the cursor position).
+MOUSE_RELATIVE = False
 
 PAUSE_KEY = Key.f8
 STOP_KEY = Key.f9
@@ -299,6 +309,186 @@ SLOW_MODE = [slow_wasd, slow_look_up_down, crouch_randomly, weapon_switching, sl
 
 
 # --------------------------------------------------------------------------- #
+# Human mode
+# --------------------------------------------------------------------------- #
+def human_time(median, spread=0.5, low=0.0, high=float('inf')):
+    """Right-skewed (log-normal) duration: usually near the median, sometimes much longer."""
+    return min(high, max(low, random.lognormvariate(math.log(median), spread)))
+
+
+def mouse_move(dx, dy):
+    try:
+        pydirectinput.moveRel(dx, dy, relative=MOUSE_RELATIVE, _pause=False)
+    except TypeError:  # older pydirectinput without these options
+        pydirectinput.moveRel(dx, dy)
+
+
+def smooth_look(dx, dy, duration):
+    """Move the view along an eased, slightly curved, slightly shaky path."""
+    distance = math.hypot(dx, dy)
+    if distance < 1:
+        return
+    steps = max(8, int(duration / 0.012))
+    bow = random.uniform(-0.12, 0.12) * distance       # sideways curve of the path
+    perp_x, perp_y = -dy / distance, dx / distance
+    sent_x = sent_y = 0
+
+    for i in range(1, steps + 1):
+        if not is_active():
+            return
+        t = i / steps
+        ease = t * t * (3 - 2 * t)                     # speed up, then slow down
+        curve = math.sin(math.pi * t) * bow
+        shake = 0.7 if i < steps else 0                # land exactly on target
+        target_x = dx * ease + perp_x * curve + random.gauss(0, shake)
+        target_y = dy * ease + perp_y * curve + random.gauss(0, shake)
+
+        step_x, step_y = round(target_x) - sent_x, round(target_y) - sent_y
+        if step_x or step_y:
+            mouse_move(step_x, step_y)
+            sent_x += step_x
+            sent_y += step_y
+        wait(duration / steps)
+
+
+def human_look(dx, dy):
+    """Turn by (dx, dy); on bigger turns, sometimes overshoot and correct."""
+    distance = math.hypot(dx, dy)
+    duration = human_time(0.15 + distance / 1500, 0.3, 0.12, 1.5)
+    if distance > 150 and random.random() < 0.35:
+        over = random.uniform(1.05, 1.15)
+        smooth_look(dx * over, dy * over, duration)
+        wait(human_time(0.08, 0.3, 0.03, 0.3))
+        smooth_look(dx * (1 - over), dy * (1 - over), human_time(0.12, 0.3, 0.06, 0.3))
+    else:
+        smooth_look(dx, dy, duration)
+
+
+class HumanPlayer:
+    """One loop that does one thing at a time, like a person idling in-game."""
+
+    def __init__(self):
+        self.pitch = 0.0          # vertical offset from the start view, in mouse units
+        self.energy = 1.0         # drifts slowly: >1 busier, <1 lazier
+        self.last_move = time.monotonic()
+
+    # -- helpers ------------------------------------------------------------
+    def still_budget(self):
+        """Seconds we can still stand still before we must move."""
+        return max(0.0, MAX_STILL - 1 - (time.monotonic() - self.last_move))
+
+    def look(self, dx, dy):
+        dy -= self.pitch * random.uniform(0.2, 0.5)   # drift back toward the horizon
+        self.pitch += dy
+        human_look(dx, dy)
+
+    # -- behaviours ---------------------------------------------------------
+    def idle(self):
+        wait(min(human_time(1.5, 0.7, 0.25, 10), self.still_budget()))
+
+    def zone_out(self):
+        wait(min(human_time(7.5, 0.5, 3, MAX_STILL), self.still_budget()))
+
+    def glance(self):
+        dx = random.choice([-1, 1]) * human_time(250, 0.6, 40, 900)
+        self.look(dx, random.gauss(0, 60))
+        if random.random() < 0.6:                     # look back roughly where we were
+            wait(human_time(0.6, 0.5, 0.2, 3))
+            self.look(-dx * random.uniform(0.6, 1.0), random.gauss(0, 30))
+
+    def look_around(self):
+        for _ in range(random.randint(2, 4)):
+            self.look(random.uniform(-500, 500), random.gauss(0, 50))
+            wait(human_time(0.5, 0.5, 0.15, 2))
+
+    def walk(self):
+        held = random.choice(DIRECTIONS)
+        for key in held:
+            inputs.press(key)
+        try:
+            if random.random() < 0.4:                 # look while walking
+                self.look(random.uniform(-300, 300), random.gauss(0, 30))
+            wait(human_time(0.5, 0.5, 0.15, 2.0))
+
+            if random.random() < 0.3:                 # change direction with a short overlap
+                nxt = random.choice([d for d in DIRECTIONS if d != held])
+                for key in nxt:
+                    inputs.press(key)
+                wait(random.uniform(0.03, 0.08))
+                for key in held:
+                    inputs.release(key)
+                held = nxt
+                wait(human_time(0.4, 0.5, 0.1, 1.5))
+        finally:
+            for key in held:
+                inputs.release(key)
+        self.last_move = time.monotonic()
+
+    def strafe(self):
+        side = random.choice(['a', 'd'])
+        for _ in range(random.randint(2, 3)):
+            hold([side], human_time(0.25, 0.4, 0.1, 0.6))
+            wait(human_time(0.08, 0.4, 0.03, 0.3))
+            side = 'd' if side == 'a' else 'a'
+        self.last_move = time.monotonic()
+
+    def fidget(self):
+        action = random.choice(['switch', 'switch_back', 'inspect', 'aim', 'shoot', 'click',
+                                'crouch', 'jump'])
+        if action == 'shoot':                         # aim, fire one shot, keep aiming a moment
+            inputs.mouse_down('right')
+            try:
+                wait(human_time(0.35, 0.4, 0.15, 1.0))
+                hold_mouse('left', human_time(0.09, 0.3, 0.04, 0.2))
+                wait(human_time(0.3, 0.5, 0.05, 1.0))
+            finally:
+                inputs.mouse_up('right')
+        elif action == 'click':                       # single click (also gets past menu screens)
+            hold_mouse('left', human_time(0.09, 0.3, 0.04, 0.2))
+        elif action == 'switch':
+            hold([random.choice(['1', '2'])], human_time(0.1, 0.25, 0.05, 0.25))
+        elif action == 'switch_back':
+            hold(['2'], human_time(0.1, 0.25, 0.05, 0.25))
+            wait(human_time(1.2, 0.5, 0.4, 4))
+            hold(['1'], human_time(0.1, 0.25, 0.05, 0.25))
+        elif action == 'inspect':
+            hold(['i'], human_time(0.4, 0.3, 0.2, 0.8))
+        elif action == 'aim':
+            hold_mouse('right', human_time(0.8, 0.5, 0.3, 3))
+        elif action == 'crouch':
+            hold(['c'], human_time(0.25, 0.3, 0.12, 0.5))
+        elif action == 'jump':
+            hold([Key.space], random.uniform(0.08, 0.15))
+
+    # -- main loop ----------------------------------------------------------
+    def run(self):
+        rest = [(self.idle, 30), (self.zone_out, 6)]
+        active = [(self.glance, 25), (self.look_around, 10), (self.walk, 18),
+                  (self.strafe, 5), (self.fidget, 8)]
+
+        while wait_until_active():
+            self.energy = min(1.6, max(0.5, self.energy + random.gauss(0, 0.05)))
+
+            # Leave room for a non-moving action (a look around can take a few seconds).
+            if self.still_budget() < 8:
+                action = self.walk                    # don't get kicked
+            else:
+                options = ([(f, w / self.energy) for f, w in rest] +
+                           [(f, w * self.energy) for f, w in active])
+                action = random.choices([f for f, _ in options], [w for _, w in options])[0]
+
+            action()
+            wait(min(human_time(0.4 / self.energy, 0.6, 0.05, 3), self.still_budget()))
+
+
+def human_player():
+    HumanPlayer().run()
+
+
+HUMAN_MODE = [human_player]
+
+
+# --------------------------------------------------------------------------- #
 # Optional extras
 # --------------------------------------------------------------------------- #
 def autojoin():
@@ -336,12 +526,13 @@ def on_hotkey(key):
 
 def main():
     parser = argparse.ArgumentParser(description="Anti-AFK input bot.")
-    parser.add_argument('--mode', choices=['fast', 'slow'], default='fast')
+    parser.add_argument('--mode', choices=['fast', 'slow', 'human'], default='fast')
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
     parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
     args = parser.parse_args()
 
-    tasks = list(FAST_MODE if args.mode == 'fast' else SLOW_MODE)
+    modes = {'fast': FAST_MODE, 'slow': SLOW_MODE, 'human': HUMAN_MODE}
+    tasks = list(modes[args.mode])
     if args.autojoin:
         tasks.append(autojoin)
     if args.anti_kick:
