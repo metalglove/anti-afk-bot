@@ -23,9 +23,12 @@ Input starts after a 5-second countdown (`--delay N` to change). With `--game`, 
 pauses whenever another window is in front (windowed, borderless and fullscreen all work)
 and resumes when you switch back.
 
-In human mode, `MAX_STILL` (top of `anti_afk.py`, default 20s) is the longest it will stand
-still. Set it well below your game's AFK-kick time. If the camera doesn't turn, set
-`MOUSE_RELATIVE = True`.
+Human mode walks, strafes, jumps and shoots regularly. It never stands still longer than
+`--max-still` seconds (default 10) and always fires at least once every 20 seconds
+(`MAX_NO_SHOT` at the top of `anti_afk.py`).
+
+If turning looks sluggish at your in-game sensitivity, raise `--look-scale` (default 3);
+lower it if it spins too far. If the camera doesn't turn at all, set `MOUSE_RELATIVE = True`.
 
 | Hotkey | Action |
 | --- | --- |

@@ -20,9 +20,16 @@ from pynput.keyboard import Controller, Key, Listener
 # The mouse-corner failsafe misfires in games that lock the cursor; F9 replaces it.
 pydirectinput.FAILSAFE = False
 
-# Human mode: never stand still longer than this many seconds. Keep it well
-# below the game's AFK-kick timer.
-MAX_STILL = 20
+# Human mode: never stand still longer than this many seconds (--max-still).
+# Keep it well below the game's AFK-kick timer.
+MAX_STILL = 10
+
+# Human mode: always fire at least once within this many seconds.
+MAX_NO_SHOT = 20
+
+# Human mode: multiplier for how far the view turns (--look-scale). Raise it if
+# turning looks sluggish at your in-game sensitivity, lower it if it spins.
+LOOK_SCALE = 3.0
 
 # Human mode: set to True if the camera doesn't turn in-game (sends raw
 # relative mouse input instead of moving the cursor position).
@@ -443,9 +450,14 @@ def smooth_look(dx, dy, duration):
 
 
 def human_look(dx, dy):
-    """Turn by (dx, dy); on bigger turns, sometimes overshoot and correct."""
+    """Turn by (dx, dy) * LOOK_SCALE; on bigger turns, sometimes overshoot and correct.
+
+    The duration is based on the unscaled distance, so a higher LOOK_SCALE turns
+    further in the same time instead of turning slower.
+    """
     distance = math.hypot(dx, dy)
     duration = human_time(0.15 + distance / 1500, 0.3, 0.12, 1.5)
+    dx, dy = dx * LOOK_SCALE, dy * LOOK_SCALE
     if distance > 150 and random.random() < 0.35:
         over = random.uniform(1.05, 1.15)
         smooth_look(dx * over, dy * over, duration)
@@ -455,18 +467,27 @@ def human_look(dx, dy):
         smooth_look(dx, dy, duration)
 
 
+def fire_once():
+    hold_mouse('left', human_time(0.09, 0.3, 0.04, 0.2))
+
+
 class HumanPlayer:
     """One loop that does one thing at a time, like a person idling in-game."""
 
     def __init__(self):
-        self.pitch = 0.0          # vertical offset from the start view, in mouse units
+        self.pitch = 0.0          # vertical offset from the start view (unscaled units)
         self.energy = 1.0         # drifts slowly: >1 busier, <1 lazier
         self.last_move = time.monotonic()
+        self.last_shot = time.monotonic()
 
     # -- helpers ------------------------------------------------------------
     def still_budget(self):
         """Seconds we can still stand still before we must move."""
         return max(0.0, MAX_STILL - 1 - (time.monotonic() - self.last_move))
+
+    def reserve(self):
+        """Budget at which we stop starting non-moving actions and walk instead."""
+        return min(7.0, MAX_STILL * 0.7)
 
     def look(self, dx, dy):
         dy -= self.pitch * random.uniform(0.2, 0.5)   # drift back toward the horizon
@@ -484,13 +505,15 @@ class HumanPlayer:
         dx = random.choice([-1, 1]) * human_time(250, 0.6, 40, 900)
         self.look(dx, random.gauss(0, 60))
         if random.random() < 0.6:                     # look back roughly where we were
-            wait(human_time(0.6, 0.5, 0.2, 3))
+            wait(min(human_time(0.6, 0.5, 0.2, 3), self.still_budget()))
             self.look(-dx * random.uniform(0.6, 1.0), random.gauss(0, 30))
 
     def look_around(self):
         for _ in range(random.randint(2, 4)):
+            if self.still_budget() < 2:
+                return
             self.look(random.uniform(-500, 500), random.gauss(0, 50))
-            wait(human_time(0.5, 0.5, 0.15, 2))
+            wait(min(human_time(0.5, 0.5, 0.15, 2), self.still_budget()))
 
     def walk(self):
         held = random.choice(DIRECTIONS)
@@ -499,9 +522,18 @@ class HumanPlayer:
         try:
             if random.random() < 0.4:                 # look while walking
                 self.look(random.uniform(-300, 300), random.gauss(0, 30))
-            wait(human_time(0.5, 0.5, 0.15, 2.0))
+            shot_due = time.monotonic() - self.last_shot > MAX_NO_SHOT - 12
+            if shot_due or random.random() < 0.25:    # hip-fire while walking
+                wait(human_time(0.3, 0.5, 0.1, 1.0))
+                fire_once()
+                self.last_shot = time.monotonic()
+            wait(human_time(1.0, 0.5, 0.3, 3.0))
 
-            if random.random() < 0.3:                 # change direction with a short overlap
+            if random.random() < 0.3:                 # jump while walking
+                hold([Key.space], random.uniform(0.08, 0.18))
+                wait(human_time(0.5, 0.4, 0.2, 1.2))
+
+            if random.random() < 0.35:               # change direction with a short overlap
                 nxt = random.choice([d for d in DIRECTIONS if d != held])
                 for key in nxt:
                     inputs.press(key)
@@ -509,7 +541,7 @@ class HumanPlayer:
                 for key in held:
                     inputs.release(key)
                 held = nxt
-                wait(human_time(0.4, 0.5, 0.1, 1.5))
+                wait(human_time(0.7, 0.5, 0.2, 2.0))
         finally:
             for key in held:
                 inputs.release(key)
@@ -517,35 +549,67 @@ class HumanPlayer:
 
     def strafe(self):
         side = random.choice(['a', 'd'])
-        for _ in range(random.randint(2, 3)):
-            hold([side], human_time(0.25, 0.4, 0.1, 0.6))
+        for _ in range(random.randint(2, 4)):
+            hold([side], human_time(0.35, 0.4, 0.12, 0.9))
             wait(human_time(0.08, 0.4, 0.03, 0.3))
             side = 'd' if side == 'a' else 'a'
         self.last_move = time.monotonic()
 
-    def fidget(self):
-        action = random.choice(['switch', 'switch_back', 'inspect', 'aim', 'shoot', 'click',
-                                'crouch', 'jump'])
-        if action == 'shoot':                         # aim, fire one shot, keep aiming a moment
+    def jump(self):
+        """One jump, or a quick double hop, sometimes moving forward with it."""
+        forward = random.random() < 0.5
+        if forward:
+            inputs.press('w')
+        try:
+            for i in range(random.choice([1, 1, 2])):
+                if i:
+                    wait(human_time(0.6, 0.3, 0.4, 1.0))  # land before jumping again
+                hold([Key.space], random.uniform(0.08, 0.18))
+            wait(human_time(0.4, 0.4, 0.2, 0.9))
+        finally:
+            if forward:
+                inputs.release('w')
+        if forward:
+            self.last_move = time.monotonic()
+
+    def shoot(self):
+        """Fire 1-3 shots, usually aimed, sometimes nudging the aim between them."""
+        aimed = random.random() < 0.7
+        if aimed:
             inputs.mouse_down('right')
-            try:
-                wait(human_time(0.35, 0.4, 0.15, 1.0))
-                hold_mouse('left', human_time(0.09, 0.3, 0.04, 0.2))
-                wait(human_time(0.3, 0.5, 0.05, 1.0))
-            finally:
+        try:
+            if aimed:
+                wait(human_time(0.3, 0.4, 0.12, 0.8))
+            for i in range(random.choice([1, 1, 2, 3])):
+                if i and self.still_budget() < 2:
+                    break
+                if i:
+                    if random.random() < 0.5:
+                        human_look(random.gauss(0, 25), random.gauss(0, 10))
+                    wait(human_time(0.25, 0.4, 0.1, 0.6))
+                fire_once()
+                self.last_shot = time.monotonic()
+            wait(human_time(0.3, 0.5, 0.05, 1.0))
+        finally:
+            if aimed:
                 inputs.mouse_up('right')
-        elif action == 'click':                       # single click (also gets past menu screens)
-            hold_mouse('left', human_time(0.09, 0.3, 0.04, 0.2))
+        self.last_shot = time.monotonic()
+
+    def fidget(self):
+        action = random.choice(['switch', 'switch_back', 'inspect', 'aim', 'click',
+                                'crouch', 'jump'])
+        if action == 'click':                         # single click (also gets past menu screens)
+            fire_once()
         elif action == 'switch':
             hold([random.choice(['1', '2'])], human_time(0.1, 0.25, 0.05, 0.25))
         elif action == 'switch_back':
             hold(['2'], human_time(0.1, 0.25, 0.05, 0.25))
-            wait(human_time(1.2, 0.5, 0.4, 4))
+            wait(min(human_time(1.2, 0.5, 0.4, 4), self.still_budget()))
             hold(['1'], human_time(0.1, 0.25, 0.05, 0.25))
         elif action == 'inspect':
             hold(['i'], human_time(0.4, 0.3, 0.2, 0.8))
         elif action == 'aim':
-            hold_mouse('right', human_time(0.8, 0.5, 0.3, 3))
+            hold_mouse('right', min(human_time(0.8, 0.5, 0.3, 3), self.still_budget()))
         elif action == 'crouch':
             hold(['c'], human_time(0.25, 0.3, 0.12, 0.5))
         elif action == 'jump':
@@ -553,16 +617,18 @@ class HumanPlayer:
 
     # -- main loop ----------------------------------------------------------
     def run(self):
-        rest = [(self.idle, 30), (self.zone_out, 6)]
-        active = [(self.glance, 25), (self.look_around, 10), (self.walk, 18),
-                  (self.strafe, 5), (self.fidget, 8)]
+        rest = [(self.idle, 15), (self.zone_out, 2)]
+        active = [(self.walk, 30), (self.glance, 18), (self.shoot, 12), (self.look_around, 8),
+                  (self.strafe, 8), (self.jump, 8), (self.fidget, 7)]
 
         while wait_until_active():
             self.energy = min(1.6, max(0.5, self.energy + random.gauss(0, 0.05)))
 
-            # Leave room for a non-moving action (a look around can take a few seconds).
-            if self.still_budget() < 8:
-                action = self.walk                    # don't get kicked
+            # Hard limits first so the game never sees us idle for too long.
+            if self.still_budget() < self.reserve():
+                action = self.walk
+            elif time.monotonic() - self.last_shot > MAX_NO_SHOT - 10:
+                action = self.shoot
             else:
                 options = ([(f, w / self.energy) for f, w in rest] +
                            [(f, w * self.energy) for f, w in active])
@@ -616,6 +682,7 @@ def on_hotkey(key):
 
 
 def main():
+    global LOOK_SCALE, MAX_STILL
     parser = argparse.ArgumentParser(description="Anti-AFK input bot.")
     parser.add_argument('--mode', choices=['human', 'fast', 'slow'], default='human')
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
@@ -625,9 +692,15 @@ def main():
     parser.add_argument('--game', default='',
                         help="game exe name (e.g. cod.exe) or part of its window title; "
                              "input only goes out while it is focused")
+    parser.add_argument('--look-scale', type=float, default=LOOK_SCALE,
+                        help=f"human mode: how far turns go (default {LOOK_SCALE})")
+    parser.add_argument('--max-still', type=float, default=MAX_STILL,
+                        help=f"human mode: max seconds without moving (default {MAX_STILL})")
     parser.add_argument('--show-focus', action='store_true',
                         help="just print the focused program/window title, to find the --game value")
     args = parser.parse_args()
+
+    LOOK_SCALE, MAX_STILL = args.look_scale, args.max_still
 
     modes = {'fast': FAST_MODE, 'slow': SLOW_MODE, 'human': HUMAN_MODE}
     tasks = list(modes[args.mode])
