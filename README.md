@@ -11,11 +11,11 @@ pip install -r requirements.txt
 ## Usage
 
 ```
-python anti_afk.py                       # fast mode (default)
-python anti_afk.py --mode slow           # slower, subtler inputs
-python anti_afk.py --mode human          # one action at a time, natural mouse and timing
+python anti_afk.py                       # human mode (default): one action at a time, natural timing
+python anti_afk.py --game cod.exe        # only send input while the game is in front
+python anti_afk.py --mode fast           # old constant random input
+python anti_afk.py --mode slow           # old slower, subtler input
 python anti_afk.py --autojoin --anti-kick  # also press F5 every 2s / 'l' every 20s
-python anti_afk.py --mode human --game cod.exe  # only send input while the game is in front
 python anti_afk.py --show-focus          # print the focused program, to find the --game value
 ```
 
@@ -31,6 +31,10 @@ still. Set it well below your game's AFK-kick time. If the camera doesn't turn, 
 | --- | --- |
 | F8 | Pause / resume (releases held keys) |
 | F9 | Stop and release all keys |
+
+If the game runs as administrator, run the script from an administrator terminal too,
+otherwise the game ignores its input and F8/F9 don't work while the game is focused.
+The script warns at startup when it isn't elevated.
 
 Using automation in online games may violate their terms of service.
 

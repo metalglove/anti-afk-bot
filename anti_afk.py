@@ -1,7 +1,8 @@
 """Anti-AFK input bot.
 
 Usage:
-    python anti_afk.py [--mode fast|slow|human] [--autojoin] [--anti-kick]
+    python anti_afk.py [--mode human|fast|slow] [--game cod.exe] [--delay N]
+                       [--autojoin] [--anti-kick] [--show-focus]
 
 Hotkeys (work while the game has focus):
     F8  pause / resume (releases all held keys while paused)
@@ -79,6 +80,15 @@ def foreground_window():
     # Some games pad their title with zero-width spaces; strip them so it can be matched.
     clean_title = ''.join(c for c in title.value if c not in '​‌‍﻿')
     return exe, clean_title
+
+
+def is_admin():
+    """True if this process runs elevated (as administrator)."""
+    try:
+        from ctypes import windll
+        return bool(windll.shell32.IsUserAnAdmin())
+    except (ImportError, AttributeError, OSError):
+        return True  # not Windows / can't tell: don't warn
 
 
 def game_is_focused(game):
@@ -607,7 +617,7 @@ def on_hotkey(key):
 
 def main():
     parser = argparse.ArgumentParser(description="Anti-AFK input bot.")
-    parser.add_argument('--mode', choices=['fast', 'slow', 'human'], default='fast')
+    parser.add_argument('--mode', choices=['human', 'fast', 'slow'], default='human')
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
     parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
     parser.add_argument('--delay', type=int, default=5,
@@ -629,6 +639,11 @@ def main():
     if args.show_focus:
         show_focus()
         return
+
+    if not is_admin():
+        print("Warning: not running as administrator. If the game runs as admin, it will ignore\n"
+              "         this input and F8/F9 won't work while it's focused. If nothing happens\n"
+              "         in-game, rerun from an administrator terminal.")
 
     if args.game:
         focused.clear()  # wait for the game before sending anything
