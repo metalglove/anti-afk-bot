@@ -33,6 +33,8 @@ STOP_KEY = Key.f9
 stop_event = threading.Event()
 running = threading.Event()  # set = active, cleared = paused
 running.set()
+focused = threading.Event()  # set = game window is in front (always set if no game given)
+focused.set()
 
 kb = Controller()
 
@@ -41,7 +43,86 @@ kb = Controller()
 # Input helpers
 # --------------------------------------------------------------------------- #
 def is_active():
-    return running.is_set() and not stop_event.is_set()
+    return running.is_set() and focused.is_set() and not stop_event.is_set()
+
+
+# --------------------------------------------------------------------------- #
+# Game focus detection (Windows)
+# --------------------------------------------------------------------------- #
+def foreground_window():
+    """Return (exe name, window title) of the focused window; exe is '' if unavailable."""
+    from ctypes import byref, create_unicode_buffer, windll, wintypes
+
+    user32, kernel32 = windll.user32, windll.kernel32
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+
+    hwnd = user32.GetForegroundWindow()
+    if not hwnd:
+        return '', ''
+
+    title = create_unicode_buffer(512)
+    user32.GetWindowTextW(hwnd, title, len(title))
+
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, byref(pid))
+    exe = ''
+    handle = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if handle:
+        try:
+            path = create_unicode_buffer(1024)
+            size = wintypes.DWORD(len(path))
+            if kernel32.QueryFullProcessImageNameW(handle, 0, path, byref(size)):
+                exe = path.value.rsplit('\\', 1)[-1]
+        finally:
+            kernel32.CloseHandle(handle)
+    # Some games pad their title with zero-width spaces; strip them so it can be matched.
+    clean_title = ''.join(c for c in title.value if c not in '​‌‍﻿')
+    return exe, clean_title
+
+
+def game_is_focused(game):
+    """True if the focused window belongs to `game`.
+
+    Matches the exe name. Only when Windows won't give the exe (some protected
+    games) does it fall back to the window title, because a terminal's title can
+    contain the command line, including the --game value.
+    """
+    exe, title = foreground_window()
+    game = game.lower()
+    if exe:
+        return exe.lower() == game or exe.lower() == game + '.exe'
+    return bool(title) and game in title.lower()
+
+
+def watch_focus(game):
+    """Pause input whenever the game window isn't in front."""
+    while not stop_event.is_set():
+        if game_is_focused(game):
+            if not focused.is_set():
+                focused.set()
+                print("Game focused, resuming.")
+        elif focused.is_set():
+            focused.clear()
+            inputs.release_all()
+            print(f"{game} not focused, waiting...")
+        stop_event.wait(0.25)
+
+
+def show_focus():
+    """Print the focused program and window title whenever it changes (Ctrl+C to quit)."""
+    print("Click around; the focused program is printed below. Ctrl+C to quit.")
+    last = None
+    try:
+        while True:
+            current = foreground_window()
+            if current != last:
+                exe, title = current
+                print(f"exe: {exe or '(unavailable)':<30} title: {title}")
+                last = current
+            stop_event.wait(1)
+    except KeyboardInterrupt:
+        pass
 
 
 class InputState:
@@ -114,8 +195,8 @@ def wait(seconds):
 
 
 def wait_until_active():
-    """Block while paused. Returns False once stopped."""
-    while not running.is_set() and not stop_event.is_set():
+    """Block while paused or the game isn't focused. Returns False once stopped."""
+    while not (running.is_set() and focused.is_set()) and not stop_event.is_set():
         stop_event.wait(0.2)
     return not stop_event.is_set()
 
@@ -529,6 +610,13 @@ def main():
     parser.add_argument('--mode', choices=['fast', 'slow', 'human'], default='fast')
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
     parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
+    parser.add_argument('--delay', type=int, default=5,
+                        help="seconds to wait before sending input (default 5)")
+    parser.add_argument('--game', default='',
+                        help="game exe name (e.g. cod.exe) or part of its window title; "
+                             "input only goes out while it is focused")
+    parser.add_argument('--show-focus', action='store_true',
+                        help="just print the focused program/window title, to find the --game value")
     args = parser.parse_args()
 
     modes = {'fast': FAST_MODE, 'slow': SLOW_MODE, 'human': HUMAN_MODE}
@@ -538,14 +626,30 @@ def main():
     if args.anti_kick:
         tasks.append(anti_kick)
 
+    if args.show_focus:
+        show_focus()
+        return
+
+    if args.game:
+        focused.clear()  # wait for the game before sending anything
+        threading.Thread(target=watch_focus, args=(args.game,), daemon=True).start()
+    else:
+        print("Tip: pass --game <exe or window title> so input pauses when the game isn't in front.")
+
     listener = Listener(on_press=on_hotkey)
     listener.start()
 
-    for task in tasks:
-        threading.Thread(target=task, daemon=True).start()
-
-    print(f"Running {args.mode} mode. F8 = pause/resume, F9 = stop.")
     try:
+        for remaining in range(args.delay, 0, -1):
+            print(f"Starting in {remaining}s - switch to the game (F9 cancels)")
+            if not wait(1):
+                break
+
+        if not stop_event.is_set():
+            for task in tasks:
+                threading.Thread(target=task, daemon=True).start()
+            print(f"Running {args.mode} mode. F8 = pause/resume, F9 = stop.")
+
         while not stop_event.wait(0.5):
             pass
     except KeyboardInterrupt:
