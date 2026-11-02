@@ -21,7 +21,8 @@ python anti_afk.py --show-focus          # print the focused program, to find th
 
 Input starts after a 5-second countdown (`--delay N` to change). With `--game`, input
 pauses whenever another window is in front (windowed, borderless and fullscreen all work)
-and resumes when you switch back.
+and resumes when you switch back. In windowed mode the cursor is also kept inside the game
+window, and a click is skipped unless the cursor is over the game itself.
 
 Human mode walks, strafes, jumps and shoots regularly. It never stands still longer than
 `--max-still` seconds (default 10) and always fires at least once every 20 seconds

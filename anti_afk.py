@@ -20,6 +20,14 @@ from pynput.keyboard import Controller, Key, Listener
 # The mouse-corner failsafe misfires in games that lock the cursor; F9 replaces it.
 pydirectinput.FAILSAFE = False
 
+# Use real pixel coordinates, so window rectangles and cursor positions agree on
+# scaled displays (e.g. 125% / 150% in Windows display settings).
+try:
+    import ctypes
+    ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor DPI aware
+except (ImportError, AttributeError, OSError):
+    pass
+
 # Human mode: never stand still longer than this many seconds (--max-still).
 # Keep it well below the game's AFK-kick timer.
 MAX_STILL = 10
@@ -43,6 +51,7 @@ running = threading.Event()  # set = active, cleared = paused
 running.set()
 focused = threading.Event()  # set = game window is in front (always set if no game given)
 focused.set()
+game_hwnd = None  # the game's window handle while it is focused (only with --game)
 
 kb = Controller()
 
@@ -114,16 +123,102 @@ def game_is_focused(game):
 
 def watch_focus(game):
     """Pause input whenever the game window isn't in front."""
+    global game_hwnd
     while not stop_event.is_set():
         if game_is_focused(game):
+            game_hwnd = _user32().GetForegroundWindow()
             if not focused.is_set():
                 focused.set()
                 print("Game focused, resuming.")
         elif focused.is_set():
             focused.clear()
+            game_hwnd = None
             inputs.release_all()
             print(f"{game} not focused, waiting...")
         stop_event.wait(0.25)
+
+
+# --------------------------------------------------------------------------- #
+# Keeping the mouse inside the game window (Windows)
+# --------------------------------------------------------------------------- #
+EDGE_MARGIN = 8  # pixels kept clear of the window edges
+
+_user32_cache = None
+
+
+def _user32():
+    global _user32_cache
+    if _user32_cache is None:
+        from ctypes import POINTER, windll, wintypes
+        u = windll.user32
+        u.GetForegroundWindow.restype = wintypes.HWND
+        u.GetClientRect.argtypes = [wintypes.HWND, POINTER(wintypes.RECT)]
+        u.ClientToScreen.argtypes = [wintypes.HWND, POINTER(wintypes.POINT)]
+        u.GetCursorPos.argtypes = [POINTER(wintypes.POINT)]
+        u.WindowFromPoint.argtypes = [wintypes.POINT]
+        u.WindowFromPoint.restype = wintypes.HWND
+        u.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        u.GetAncestor.restype = wintypes.HWND
+        _user32_cache = u
+    return _user32_cache
+
+
+def game_area():
+    """Screen rectangle (left, top, right, bottom) of the game's client area, inset
+    by EDGE_MARGIN, or None if unknown."""
+    from ctypes import byref, wintypes
+    hwnd = game_hwnd
+    if not hwnd:
+        return None
+    u = _user32()
+    rect = wintypes.RECT()
+    origin = wintypes.POINT(0, 0)
+    if not u.GetClientRect(hwnd, byref(rect)) or not u.ClientToScreen(hwnd, byref(origin)):
+        return None
+    left, top = origin.x + EDGE_MARGIN, origin.y + EDGE_MARGIN
+    right = origin.x + rect.right - 1 - EDGE_MARGIN
+    bottom = origin.y + rect.bottom - 1 - EDGE_MARGIN
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
+def cursor_pos():
+    from ctypes import byref, wintypes
+    point = wintypes.POINT()
+    _user32().GetCursorPos(byref(point))
+    return point
+
+
+def cursor_in_game():
+    """True if a click now would land on the game window (always True without --game)."""
+    if not game_hwnd:
+        return True
+    area = game_area()
+    if area is None:
+        return False
+    point = cursor_pos()
+    left, top, right, bottom = area
+    if not (left <= point.x <= right and top <= point.y <= bottom):
+        return False
+    # Also make sure no other window (overlay, always-on-top app) covers that spot.
+    u = _user32()
+    under = u.WindowFromPoint(point)
+    return bool(under) and u.GetAncestor(under, 2) == game_hwnd  # 2 = GA_ROOT
+
+
+def clamp_to_game(dx, dy):
+    """Shrink a cursor move so it ends inside the game window."""
+    if MOUSE_RELATIVE or not game_hwnd:
+        return dx, dy  # raw relative input doesn't move the cursor
+    area = game_area()
+    if area is None:
+        return dx, dy
+    left, top, right, bottom = area
+    point = cursor_pos()
+    x = min(max(point.x + dx, left), right)
+    y = min(max(point.y + dy, top), bottom)
+    return x - point.x, y - point.y
 
 
 def show_focus():
@@ -176,8 +271,8 @@ class InputState:
 
     def mouse_down(self, button):
         with self._lock:
-            if not is_active():
-                return
+            if not is_active() or not cursor_in_game():
+                return  # never click outside the game window
             if self._buttons.get(button, 0) == 0:
                 pydirectinput.mouseDown(button=button)
             self._buttons[button] = self._buttons.get(button, 0) + 1
@@ -245,8 +340,8 @@ def sweep(dx, dy, steps, step_duration):
     for _ in range(steps):
         if not is_active():
             return
-        pydirectinput.moveRel(dx, dy, duration=step_duration)
-        wait(0.05)
+        mouse_move(dx, dy)
+        wait(0.15)  # pydirectinput ignores step_duration; 0.15s matches the old pacing
 
 
 # --------------------------------------------------------------------------- #
@@ -415,6 +510,10 @@ def human_time(median, spread=0.5, low=0.0, high=float('inf')):
 
 
 def mouse_move(dx, dy):
+    """Move the mouse by (dx, dy), kept inside the game window when --game is set."""
+    dx, dy = clamp_to_game(dx, dy)
+    if not (dx or dy):
+        return
     try:
         pydirectinput.moveRel(dx, dy, relative=MOUSE_RELATIVE, _pause=False)
     except TypeError:  # older pydirectinput without these options
