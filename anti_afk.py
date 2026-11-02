@@ -13,6 +13,7 @@ import math
 import random
 import threading
 import time
+import traceback
 
 import pydirectinput
 from pynput.keyboard import Controller, Key, Listener
@@ -68,9 +69,10 @@ def is_active():
 # --------------------------------------------------------------------------- #
 def foreground_window():
     """Return (exe name, window title) of the focused window; exe is '' if unavailable."""
-    from ctypes import byref, create_unicode_buffer, windll, wintypes
+    from ctypes import WinDLL, byref, create_unicode_buffer, wintypes
 
-    user32, kernel32 = windll.user32, windll.kernel32
+    # Private handles: don't change the shared windll objects pydirectinput uses.
+    user32, kernel32 = WinDLL('user32'), WinDLL('kernel32')
     user32.GetForegroundWindow.restype = wintypes.HWND
     kernel32.OpenProcess.restype = wintypes.HANDLE
 
@@ -147,10 +149,12 @@ _user32_cache = None
 
 
 def _user32():
+    """A private user32 handle. Setting argtypes on the shared ctypes.windll.user32
+    would break pydirectinput, which calls the same functions with its own types."""
     global _user32_cache
     if _user32_cache is None:
-        from ctypes import POINTER, windll, wintypes
-        u = windll.user32
+        from ctypes import POINTER, WinDLL, wintypes
+        u = WinDLL('user32')
         u.GetForegroundWindow.restype = wintypes.HWND
         u.GetClientRect.argtypes = [wintypes.HWND, POINTER(wintypes.RECT)]
         u.ClientToScreen.argtypes = [wintypes.HWND, POINTER(wintypes.POINT)]
@@ -765,6 +769,16 @@ def anti_kick():
 # --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
+def run_task(task):
+    """Run one action loop; if it crashes, stop everything instead of idling silently."""
+    try:
+        task()
+    except Exception:
+        traceback.print_exc()
+        print(f"{task.__name__} crashed - stopping so you notice (you'd get kicked otherwise).")
+        stop_event.set()
+
+
 def on_hotkey(key):
     if key == STOP_KEY:
         print("Stopping...")
@@ -834,7 +848,7 @@ def main():
 
         if not stop_event.is_set():
             for task in tasks:
-                threading.Thread(target=task, daemon=True).start()
+                threading.Thread(target=run_task, args=(task,), daemon=True).start()
             print(f"Running {args.mode} mode. F8 = pause/resume, F9 = stop.")
 
         while not stop_event.wait(0.5):
