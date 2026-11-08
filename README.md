@@ -14,7 +14,7 @@ Run `python app.py` in this folder to open the app. Administrator rights aren't 
 unless the game itself runs as administrator: Windows doesn't let a normal program send
 input to an elevated one, so then start the terminal as administrator too.
 
-1. Click **Detect** and then click on the game, or type its exe name (e.g. `cod.exe`).
+1. The game is set to `cod.exe` by default. For another game, click **Detect** in Settings and then click on it, or type its exe name.
 2. Click **Start** and switch to the game.
 
 The big bar at the top shows what the bot is doing right now. **Test (send nothing)** runs
