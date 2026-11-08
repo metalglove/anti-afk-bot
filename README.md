@@ -124,7 +124,8 @@ it reads nothing. `rules.json` says which screen has which words and what to cli
 ```
 
 A screen matches when all its `if_seen` words are on screen; the bot then clicks the text
-in `click` (wherever it is), or just waits if there is no `click`. It never clicks while any
+in `click` (wherever it is), presses the key in `press` (e.g. `"press": "ESC"`), or just
+waits if it has neither. It never clicks while any
 word in `never_click_if_seen` (STORE, PURCHASE, BUY, COD POINTS...) is visible, and a menu
 that matches no rule gets no input at all. Because it reads words instead of pixel
 positions, it works at any resolution or window size.
@@ -135,8 +136,9 @@ moving and shooting as soon as a match ends. These rules only pause input; they 
 
 Rules are checked from top to bottom and the first match wins. The After Action Report
 also shows "SEARCHING FOR A MATCH" in its corner, so its rules (`report_victory`,
-`report_defeat`, `report`) come before `searching`. The bot waits on that screen and
-records the match as a victory or defeat from it, in case it missed the banner.
+`report_defeat`, `report`) come before `searching`. The report stays until you dismiss it,
+so the bot records the match as a victory or defeat from it (in case it missed the banner)
+and then presses ESC.
 
 To add a screen, open it in the game and click **Read screen** in the app (or run
 `python anti_afk.py --read-screen`). After 3 seconds it prints the text it sees and which

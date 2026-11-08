@@ -586,6 +586,8 @@ class App:
                          anchor='w', font=ctk.CTkFont(FONT, 12)).grid(row=1, column=0, sticky='w', padx=14, pady=(0, 10))
             if screen['click']:
                 c = chip(row, f"click {screen['click']}", '#1e3a5f')
+            elif screen['press']:
+                c = chip(row, f"press {screen['press'].upper()}", '#1e3a5f')
             elif screen['in_match']:
                 c = chip(row, "pause input", '#3b2f0b')
             else:
@@ -632,6 +634,8 @@ class App:
                     elif screen and screen['click']:
                         verdict = f"✔ Screen '{screen['name']}': clicks '{screen['click']}' at " \
                                   f"{bot.find_text(read, screen['click'])}."
+                    elif screen and screen['press']:
+                        verdict = f"✔ Screen '{screen['name']}': presses {screen['press'].upper()}."
                     elif screen:
                         verdict = f"✔ Screen '{screen['name']}': waits."
                     else:
@@ -664,7 +668,7 @@ class App:
             return 'playing'
         if line.startswith('['):
             return 'state'
-        if 'click' in line.lower():
+        if 'click' in line.lower() or 'pressed esc' in line.lower():
             return 'click'
         if any(w in line for w in ('Warning', "Can't", "Couldn't", 'Not running', 'crashed', 'Tip')):
             return 'warn'
