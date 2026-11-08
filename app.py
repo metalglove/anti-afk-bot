@@ -1,6 +1,6 @@
 """Anti-AFK bot: window version.
 
-Start it with AntiAFK.bat (asks for administrator rights), or `python app.py`.
+Start it with `python app.py`.
 Same engine as anti_afk.py; this adds a window with the live state, a state
 diagram, session stats, the known screens and settings. Settings are remembered
 in settings.json.
@@ -242,7 +242,7 @@ class App:
                      font=ctk.CTkFont(FONT, 20, 'bold')).grid(row=0, column=0, sticky='w')
         self.warnings = ctk.CTkFrame(header, fg_color='transparent')
         self.warnings.grid(row=0, column=1, sticky='e')
-        self.admin_chip = chip(self.warnings, "⚠ Not running as administrator", '#422006', '#fcd34d')
+        self.admin_chip = chip(self.warnings, "⚠ Not admin: only a problem if the game runs as admin", '#422006', '#fcd34d')
         self.game_chip = chip(self.warnings, "⚠ No game set (Settings)", '#422006', '#fcd34d')
         self.game_chip.bind('<Button-1>', lambda e: self.tabs.set("Settings"))
 

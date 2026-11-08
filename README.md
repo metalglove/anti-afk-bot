@@ -10,8 +10,9 @@ pip install -r requirements.txt
 
 ## Run
 
-Double-click **AntiAFK.bat**. It asks for administrator rights (the game ignores input
-from programs that don't have them) and opens the app.
+Run `python app.py` in this folder to open the app. Administrator rights aren't needed,
+unless the game itself runs as administrator: Windows doesn't let a normal program send
+input to an elevated one, so then start the terminal as administrator too.
 
 1. Click **Detect** and then click on the game, or type its exe name (e.g. `cod.exe`).
 2. Click **Start** and switch to the game.
@@ -29,7 +30,7 @@ Using automation in online games may break the game's terms of service and can g
 account banned.
 
 Prefer the terminal? `python anti_afk.py --game cod.exe` does the same (`--help` for options,
-`--test` for test mode). Run it from an administrator terminal.
+`--test` for test mode).
 
 ## What the bot is doing
 
