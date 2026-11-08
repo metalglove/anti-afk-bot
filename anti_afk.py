@@ -606,7 +606,7 @@ def click_screen(screen, seen_at):
 #   NOT FOCUSED   the game isn't the window in front (only with --game)
 #   PLAYING       in a match: all actions run
 #   RESUMING      a menu just closed; waits MENU_RESUME_AFTER before PLAYING
-#   SCREEN name   a screen from rules.json (e.g. class_select): clicks its button
+#   SCREEN name   a screen from rules.json (e.g. class_select): clicks its button or presses its key
 #   MENU          a menu it doesn't know, or a store/purchase screen: nothing is sent
 STARTING, PAUSED, NOT_FOCUSED, PLAYING, RESUMING, SCREEN, MENU, STOPPED = (
     'STARTING', 'PAUSED', 'NOT FOCUSED', 'PLAYING', 'RESUMING', 'SCREEN', 'MENU', 'STOPPED')

@@ -41,7 +41,7 @@ current state:
 [21:04:12] SCREEN: kicked (clicking EXIT)   (after 3m10s PLAYING)
 [21:04:16] SCREEN: main_menu (clicking QUICK PLAY)
 [21:04:21] SCREEN: searching (waiting)
-[21:05:31] SCREEN: class_select (clicking SELECT)
+[21:05:31] SCREEN: class_select (pressing SPACE)
 [21:05:34] RESUMING: playing in 1.5s   (after 1m18s SCREEN)
 [21:05:35] PLAYING   (after 1s RESUMING)
 ```
@@ -59,7 +59,7 @@ flowchart TD
     main --> search["searching<br/><b>wait</b>"]
     search --> lobby["lobby / map voting<br/><b>wait</b>"]
     over --> lobby
-    lobby -- "match loads" --> cls["class_select<br/><b>click SELECT</b>"]
+    lobby -- "match loads" --> cls["class_select<br/><b>press SPACE</b>"]
 
     cls -- "cursor hidden" --> resume(["RESUMING<br/>wait 1.5s"])
     unknown -- "cursor hidden" --> resume
@@ -122,7 +122,7 @@ it reads nothing. `rules.json` says which screen has which words and what to cli
 {"name": "searching",    "if_seen": ["SEARCHING FOR A MATCH"]},
 {"name": "main_menu",    "if_seen": ["QUICK PLAY", "FEATURED"], "click": "QUICK PLAY"},
 {"name": "report",       "if_seen": ["AFTER ACTION REPORT"],    "press": "ESC"},
-{"name": "class_select", "if_seen": ["SELECT CLASS"],           "click": "SELECT"}
+{"name": "class_select", "if_seen": ["SELECT CLASS"],           "press": "SPACE"}
 ```
 
 A screen matches when all its `if_seen` words are on screen; the bot then clicks the text

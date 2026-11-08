@@ -100,7 +100,7 @@ class FlowDiagram:
         'lobby': (530, 45, "Lobby", "wait"),
         'play': (90, 145, "PLAYING", "move, look, shoot"),
         'over': (380, 145, "Victory / defeat", "pause, ESC report"),
-        'class_select': (530, 145, "Class select", "click SELECT"),
+        'class_select': (530, 145, "Class select", "press SPACE"),
         'menu': (90, 245, "Unknown / store", "send nothing"),
         'resume': (380, 245, "RESUMING", "wait 1.5s"),
     }
