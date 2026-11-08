@@ -631,8 +631,7 @@ class App:
             ctk.CTkLabel(row, text=screen['name'], text_color=TEXT, anchor='w',
                          font=ctk.CTkFont(FONT, 14, 'bold')).grid(row=0, column=0, sticky='w', padx=14, pady=(10, 0))
             when = "during a match, " if screen['in_match'] else ""
-            ctk.CTkLabel(row, text=f"{when}when it sees: " + "  +  ".join(screen['if_seen'])
-                         + (f"  (not: {', '.join(screen['unless_seen'])})" if screen['unless_seen'] else ''), text_color=MUTED,
+            ctk.CTkLabel(row, text=f"{when}when it sees: " + "  +  ".join(screen['if_seen']), text_color=MUTED,
                          anchor='w', font=ctk.CTkFont(FONT, 12)).grid(row=1, column=0, sticky='w', padx=14, pady=(0, 10))
             if bot.screen_action(screen):
                 c = chip(row, bot.screen_action(screen), '#1e3a5f')

@@ -392,7 +392,6 @@ def load_rules():
             if screen['in_match']:
                 screen['click'] = screen['press'] = None  # in-match rules only pause input
             screen['if_seen'] = list(screen.get('if_seen', []))
-            screen['unless_seen'] = list(screen.get('unless_seen', []))
         return data
     except (OSError, ValueError) as e:
         print(f"Warning: can't read {os.path.basename(RULES_FILE)} ({e}); no screens will be clicked.")
@@ -419,12 +418,6 @@ def seen(read, phrase):
         return False
     return any(difflib.SequenceMatcher(None, want, _letters(text)).ratio() >= 0.82
                for text, _, _ in read['items'])
-
-
-def seen_anywhere(read, phrase):
-    """Like seen(), but also true when OCR split the phrase over separate items
-    ('BEST PLAY' | 'EARNED'). Used for "unless_seen", where a false yes is the safe side."""
-    return seen(read, phrase) or _letters(phrase) in _letters(read['text'])
 
 
 _ocr_engine = None
@@ -498,8 +491,7 @@ def classify(read, in_match=False):
     for screen in rules['screens']:
         if in_match and not screen['in_match']:
             continue
-        if screen['if_seen'] and all(seen(read, p) for p in screen['if_seen']) and \
-                not any(seen_anywhere(read, p) for p in screen['unless_seen']):
+        if screen['if_seen'] and all(seen(read, p) for p in screen['if_seen']):
             return screen, danger
     return None, danger
 
