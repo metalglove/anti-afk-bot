@@ -155,8 +155,8 @@ class FlowDiagram:
         c = self.canvas
         c.delete('all')
         width, height = max(c.winfo_width(), 200), max(c.winfo_height(), 120)
-        k = min(width / self.W, height / self.H)  # fit both ways, centered
-        ox, oy = (width - self.W * k) / 2, (height - self.H * k) / 2
+        k = min(width / self.W, height / self.H)  # fit both ways
+        ox, oy = (width - self.W * k) / 2, min(12, (height - self.H * k) / 2)  # top-aligned
         w, h = self.NODE_W * k / 2, self.NODE_H * k / 2
         # Negative sizes are pixels, so the text scales with the boxes whatever the
         # Windows display scaling is.
@@ -210,6 +210,42 @@ class FlowDiagram:
             c.create_text(x + tw / 2, y, text=label, fill='white' if lit else MUTED, font=sub_font)
             x += tw + 8 * k
 
+class Pages:
+    """Navigation pills in the header and the pages they switch between
+    (same set / get / tab calls as a CTkTabview)."""
+
+    def __init__(self, nav, container, names):
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_rowconfigure(0, weight=1)
+        self.frames, self.buttons, self.current = {}, {}, None
+        for i, name in enumerate(names):
+            frame = ctk.CTkFrame(container, fg_color='transparent')
+            frame.grid(row=0, column=0, sticky='nswe')
+            self.frames[name] = frame
+            button = ctk.CTkButton(nav, text=name, width=104, height=34, corner_radius=9,
+                                   font=ctk.CTkFont(FONT, 14, 'bold'), border_width=0,
+                                   command=lambda n=name: self.set(n))
+            button.grid(row=0, column=i, padx=(4 if i == 0 else 2, 4 if i == len(names) - 1 else 2),
+                        pady=4)
+            self.buttons[name] = button
+        self.set(names[0])
+
+    def set(self, name):
+        self.current = name
+        self.frames[name].tkraise()
+        for n, button in self.buttons.items():
+            if n == name:
+                button.configure(fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color='white')
+            else:
+                button.configure(fg_color='transparent', hover_color=NEUTRAL, text_color=MUTED)
+
+    def get(self):
+        return self.current
+
+    def tab(self, name):
+        return self.frames[name]
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -248,27 +284,26 @@ class App:
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(1, weight=1)
 
-        # Header: name + warnings that need attention.
+        # Header: name, navigation, and warnings that need attention.
         header = ctk.CTkFrame(root, fg_color='transparent')
-        header.grid(row=0, column=0, sticky='we', padx=20, pady=(14, 0))
-        header.grid_columnconfigure(1, weight=1)
+        header.grid(row=0, column=0, sticky='we', padx=20, pady=(14, 10))
+        header.grid_columnconfigure(2, weight=1)
         ctk.CTkLabel(header, text="Anti-AFK", text_color=TEXT,
-                     font=ctk.CTkFont(FONT, 20, 'bold')).grid(row=0, column=0, sticky='w')
-        self.warnings = ctk.CTkFrame(header, fg_color='transparent')
-        self.warnings.grid(row=0, column=1, sticky='e')
+                     font=ctk.CTkFont(FONT, 20, 'bold')).grid(row=0, column=0, sticky='w', padx=(0, 28))
+        nav = ctk.CTkFrame(header, fg_color=CARD, corner_radius=12, border_width=1,
+                           border_color=CARD_BORDER)
+        nav.grid(row=0, column=1, sticky='w')
+        # Plain tk frame: an empty CTkFrame falls back to 200x200 when no warning shows.
+        self.warnings = tk.Frame(header, bg=BG)
+        self.warnings.grid(row=0, column=2, sticky='e')
         self.admin_chip = chip(self.warnings, "⚠ Not admin: only a problem if the game runs as admin", '#422006', '#fcd34d')
         self.game_chip = chip(self.warnings, "⚠ No game set (Settings)", '#422006', '#fcd34d')
         self.game_chip.bind('<Button-1>', lambda e: self.tabs.set("Settings"))
+        tk.Frame(root, bg=CARD_BORDER, height=1).grid(row=0, column=0, sticky='swe')
 
-        self.tabs = ctk.CTkTabview(root, fg_color='transparent', segmented_button_selected_color=ACCENT,
-                                   segmented_button_selected_hover_color=ACCENT_HOVER, anchor='nw')
-        self.tabs.grid(row=1, column=0, sticky='nswe', padx=12, pady=(0, 12))
-        for name in ("Dashboard", "History", "Screens", "Settings"):
-            self.tabs.add(name)
-        try:  # roomier tab buttons
-            self.tabs._segmented_button.configure(font=ctk.CTkFont(FONT, 13, 'bold'), height=34)
-        except (AttributeError, ValueError):
-            pass
+        pages = ctk.CTkFrame(root, fg_color='transparent')
+        pages.grid(row=1, column=0, sticky='nswe', padx=12, pady=(10, 12))
+        self.tabs = Pages(nav, pages, ("Dashboard", "History", "Screens", "Settings"))
         self.build_dashboard(self.tabs.tab("Dashboard"))
         self.build_history(self.tabs.tab("History"))
         self.build_screens(self.tabs.tab("Screens"))
