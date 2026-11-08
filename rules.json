@@ -9,6 +9,8 @@
     {"name": "searching", "if_seen": ["SEARCHING FOR A MATCH"]},
     {"name": "lobby", "if_seen": ["MAP VOTING"]},
     {"name": "lobby_found", "if_seen": ["BEST LOBBY FOUND"]},
-    {"name": "class_select", "if_seen": ["SELECT CLASS"], "click": "SELECT"}
+    {"name": "class_select", "if_seen": ["SELECT CLASS"], "click": "SELECT"},
+    {"name": "victory", "if_seen": ["VICTORY"], "in_match": true},
+    {"name": "defeat", "if_seen": ["DEFEAT"], "in_match": true}
   ]
 }

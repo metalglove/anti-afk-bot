@@ -82,6 +82,10 @@ word in `never_click_if_seen` (STORE, PURCHASE, BUY, COD POINTS...) is visible, 
 that matches no rule gets no input at all. Because it reads words instead of pixel
 positions, it works at any resolution or window size.
 
+Rules with `"in_match": true` are also checked during a match, every 5 seconds, even
+without a cursor. The VICTORY and DEFEAT banners are set up this way, so the bot stops
+moving and shooting as soon as a match ends. These rules only pause input; they never click.
+
 To add a screen, open it in the game and click **Read screen** in the app (or run
 `python anti_afk.py --read-screen`). After 3 seconds it prints the text it sees and which
 rule matches. Pick a few words that are only on that screen, add a rule with **Edit**, and

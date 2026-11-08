@@ -20,6 +20,7 @@ Unknown menus, and any screen showing STORE, PURCHASE etc., stay paused.
 --read-screen prints the text it reads, to help add rules.
 """
 import argparse
+import difflib
 import json
 import math
 import os
@@ -350,10 +351,14 @@ def menu_reason():
 # screen is and what to click, by the words on it, e.g.
 #   {"name": "kicked", "if_seen": ["KICKED FOR INACTIVITY"], "click": "EXIT"}
 # Nothing is clicked while any "never_click_if_seen" word (STORE, PURCHASE...)
-# is on screen. No per-resolution setup: the words are found wherever they are.
+# is on screen. Rules with "in_match": true are also checked during a match
+# (every MATCH_READ_INTERVAL s, no cursor needed) and pause input while they match,
+# e.g. the VICTORY / DEFEAT banner at the end of a match. No per-resolution setup: the words are found wherever they are.
 RULES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rules.json')
 READ_INTERVAL = 3.0               # seconds between screen reads while a menu stays open
 READ_AFTER_CLICK = 0.8            # seconds after a click before reading the new screen
+MATCH_READ_INTERVAL = 5.0         # seconds between reads during a match, only if a rule has
+                                  # "in_match": true (e.g. VICTORY / DEFEAT banners)
 SCREEN_CLICK_DELAY = (1.0, 2.5)   # seconds to "read" a screen before clicking it
 SCREEN_CLICK_COOLDOWN = 4.0       # seconds before clicking the same screen again
 OCR_MIN_CONFIDENCE = 0.5
@@ -379,6 +384,9 @@ def load_rules():
         data.setdefault('never_click_if_seen', [])
         for screen in data['screens']:
             screen.setdefault('click', None)
+            screen['in_match'] = bool(screen.get('in_match', False))
+            if screen['in_match']:
+                screen['click'] = None  # in-match rules only pause input, never click
             screen['if_seen'] = list(screen.get('if_seen', []))
         return data
     except (OSError, ValueError) as e:
@@ -390,6 +398,22 @@ def phrase_pattern(phrase):
     """Regex for a phrase that also matches when OCR drops the spaces ('QUICKPLAY')."""
     words = [re.escape(w) for w in phrase.split()]
     return re.compile(r'(?<![A-Z0-9])' + r'\s*'.join(words) + r'(?![A-Z0-9])', re.IGNORECASE)
+
+
+def _letters(text):
+    return re.sub(r'[^A-Z0-9]', '', text.upper())
+
+
+def seen(read, phrase):
+    """True if `phrase` is on screen. Also accepts an item that is a near miss of the
+    whole phrase, since OCR sometimes drops or swaps a letter ('VICTORY' -> '/CTORY')."""
+    if phrase_pattern(phrase).search(read['text']):
+        return True
+    want = _letters(phrase)
+    if len(want) < 5:
+        return False
+    return any(difflib.SequenceMatcher(None, want, _letters(text)).ratio() >= 0.82
+               for text, _, _ in read['items'])
 
 
 _ocr_engine = None
@@ -443,15 +467,16 @@ def find_text(read, phrase):
     return best[1] if best else None
 
 
-def classify(read):
-    """Which rule matches a read: (screen rule or None, danger word or None)."""
+def classify(read, in_match=False):
+    """Which rule matches a read: (screen rule or None, danger word or None).
+    in_match: only consider rules marked "in_match" (no cursor is showing)."""
     if read is None:
         return None, None
-    danger = next((w for w in rules['never_click_if_seen']
-                   if phrase_pattern(w).search(read['text'])), None)
+    danger = next((w for w in rules['never_click_if_seen'] if seen(read, w)), None)
     for screen in rules['screens']:
-        if screen['if_seen'] and all(phrase_pattern(p).search(read['text'])
-                                     for p in screen['if_seen']):
+        if in_match and not screen['in_match']:
+            continue
+        if screen['if_seen'] and all(seen(read, p) for p in screen['if_seen']):
             return screen, danger
     return None, danger
 
@@ -464,14 +489,14 @@ class ScreenReader:
         self.lock = threading.Lock()
         self.wanted = threading.Event()  # set while the state machine wants reads
         self.soon = threading.Event()    # set to read now instead of after the interval
+        self.interval = READ_INTERVAL    # set by the state machine (menu or match pace)
 
     def read_soon(self):
         self.soon.set()
 
-    @staticmethod
-    def max_age():
+    def max_age(self):
         """A read older than this is not trusted."""
-        return READ_INTERVAL + 2.0
+        return self.interval + 2.0
 
     def run(self):
         warned = False
@@ -493,7 +518,7 @@ class ScreenReader:
             with self.lock:
                 self.latest = read
             # Wait for the interval, or less if someone asks for a read (e.g. after a click).
-            deadline = time.monotonic() + READ_INTERVAL
+            deadline = time.monotonic() + self.interval
             while not stop_event.is_set() and self.wanted.is_set() and time.monotonic() < deadline:
                 if self.soon.wait(0.1):
                     self.soon.clear()
@@ -579,6 +604,9 @@ def detect(read=None):
         return NOT_FOCUSED, 'waiting for the game window', None
     reason = menu_reason()
     if not reason:
+        screen, _ = classify(read, in_match=True)
+        if screen:  # e.g. the VICTORY / DEFEAT banner: the match is over
+            return SCREEN, f"{screen['name']} (match over, input paused)", screen
         return PLAYING, '', None
     if read is None:
         return MENU, 'reading the screen...', None
@@ -642,12 +670,15 @@ def run_state_machine():
     last_reminder = time.monotonic()
     while not stop_event.is_set():
         now = time.monotonic()
-        in_menu = started.is_set() and running.is_set() and focused.is_set() and bool(menu_reason())
-        if in_menu:
+        active = started.is_set() and running.is_set() and focused.is_set()
+        in_menu = active and bool(menu_reason())
+        watch_match = active and not in_menu and any(r['in_match'] for r in rules['screens'])
+        reader.interval = READ_INTERVAL if in_menu else MATCH_READ_INTERVAL
+        if in_menu or watch_match:
             reader.wanted.set()
         else:
             reader.wanted.clear()
-        read = reader.fresh() if in_menu else None
+        read = reader.fresh() if (in_menu or watch_match) else None
         name, detail, screen = detect(read)
         current, _, lasted = current_state()
 

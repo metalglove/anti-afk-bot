@@ -286,7 +286,8 @@ class App:
             ctk.CTkLabel(row, text='"' + '" + "'.join(screen['if_seen']) + '"', text_color=MUTED, anchor='w',
                          font=ctk.CTkFont(FONT, 11)).grid(row=1, column=0, sticky='w', padx=10, pady=(0, 6))
             clicks = bool(screen['click'])
-            ctk.CTkLabel(row, text=f" click {screen['click']} " if clicks else " wait ", corner_radius=6,
+            chip = f" click {screen['click']} " if clicks else (" pause (in match) " if screen['in_match'] else " wait ")
+            ctk.CTkLabel(row, text=chip, corner_radius=6,
                          fg_color='#1e3a5f' if clicks else '#3f3f46', text_color=TEXT,
                          font=ctk.CTkFont(FONT, 11)).grid(row=0, column=1, rowspan=2, padx=8)
         never = bot.rules['never_click_if_seen']
