@@ -597,7 +597,8 @@ stats = {'started': None, 'clicks': 0, 'matches': 0, 'kicks': 0, 'playing': 0.0,
 # appended to matches.csv (not in test runs), so the total time adds up across runs.
 HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'matches.csv')
 MATCH_END_SCREENS = {'victory': 'victory', 'defeat': 'defeat', 'kicked': 'kicked',
-                     'after_action': 'over', 'main_menu': 'left', 'searching': 'left'}
+                     'report_victory': 'victory', 'report_defeat': 'defeat', 'report': 'over',
+                     'main_menu': 'left', 'searching': 'left'}
 match = {'start': None}  # wall-clock start of the current match
 
 
@@ -626,10 +627,6 @@ def _track_match(name, detail):
     if name != SCREEN or match['start'] is None:
         return
     result = MATCH_END_SCREENS.get(detail.split(' (')[0])
-    if result == 'over':  # after action report: it also shows VICTORY / DEFEAT
-        read = reader.latest
-        result = next((w.lower() for w in ('VICTORY', 'DEFEAT')
-                       if read is not None and seen(read, w)), 'over')
     if result is not None:
         end_match(result)
 
@@ -641,6 +638,8 @@ def end_match(result):
     duration = time.time() - match['start']
     started_at = match['start']
     match['start'] = None
+    if result in ('victory', 'defeat', 'over'):  # counted once, even if the banner and report both show
+        stats['matches'] += 1
     stats['match_time'] += duration
     stats['last_match'] = (result, duration)
     print(f"   Match over ({result}) after {format_duration(duration)}. "
@@ -725,12 +724,8 @@ def enter_state(name, detail=''):
             state['since'] = time.monotonic()
             if previous == PLAYING:
                 stats['playing'] += lasted
-        if name == SCREEN:
-            screen = detail.split(' (')[0]
-            if screen in ('victory', 'defeat'):
-                stats['matches'] += 1
-            elif screen == 'kicked':
-                stats['kicks'] += 1
+        if name == SCREEN and detail.split(' (')[0] == 'kicked':
+            stats['kicks'] += 1
     if name == PLAYING:
         no_menu.set()
     elif no_menu.is_set():

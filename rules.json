@@ -5,8 +5,10 @@
   ],
   "screens": [
     {"name": "kicked", "if_seen": ["KICKED FOR INACTIVITY"], "click": "EXIT"},
-    {"name": "after_action", "if_seen": ["AFTER ACTION REPORT"]},
     {"name": "main_menu", "if_seen": ["QUICK PLAY", "FEATURED"], "click": "QUICK PLAY"},
+    {"name": "report_victory", "if_seen": ["AFTER ACTION REPORT", "VICTORY"]},
+    {"name": "report_defeat", "if_seen": ["AFTER ACTION REPORT", "DEFEAT"]},
+    {"name": "report", "if_seen": ["AFTER ACTION REPORT"]},
     {"name": "searching", "if_seen": ["SEARCHING FOR A MATCH"]},
     {"name": "lobby", "if_seen": ["MAP VOTING"]},
     {"name": "lobby_found", "if_seen": ["BEST LOBBY FOUND"]},

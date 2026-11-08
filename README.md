@@ -96,8 +96,8 @@ flowchart TD
 
 ## Match time
 
-Each match is timed from the moment play starts until VICTORY / DEFEAT, a kick, or the
-main menu (or until you stop the bot mid-match). Finished matches are added to
+Each match is timed from the moment play starts until VICTORY / DEFEAT, the After Action
+Report, a kick, or the main menu (or until you stop the bot mid-match). Finished matches are added to
 `matches.csv`, so the total keeps adding up across runs. The app shows the session and
 all-time totals on the Dashboard and every match on the **History** tab. Test runs aren't
 recorded.
@@ -133,9 +133,10 @@ Rules with `"in_match": true` are also checked during a match, every 5 seconds, 
 without a cursor. The VICTORY and DEFEAT banners are set up this way, so the bot stops
 moving and shooting as soon as a match ends. These rules only pause input; they never click.
 
-After the banner the game shows the AFTER ACTION REPORT while it already searches for the
-next match. The bot waits there without clicking or pressing ESC, and if it missed the
-banner it still records the match as a victory or defeat from the report.
+Rules are checked from top to bottom and the first match wins. The After Action Report
+also shows "SEARCHING FOR A MATCH" in its corner, so its rules (`report_victory`,
+`report_defeat`, `report`) come before `searching`. The bot waits on that screen and
+records the match as a victory or defeat from it, in case it missed the banner.
 
 To add a screen, open it in the game and click **Read screen** in the app (or run
 `python anti_afk.py --read-screen`). After 3 seconds it prints the text it sees and which
