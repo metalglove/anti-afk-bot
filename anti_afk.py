@@ -3,10 +3,15 @@
 Usage:
     python anti_afk.py [--mode human|fast|slow] [--game cod.exe] [--delay N]
                        [--autojoin] [--anti-kick] [--show-focus]
+                       [--ingame-pixel X,Y,RRGGBB] [--no-menu-check] [--show-menu]
 
 Hotkeys (work while the game has focus):
     F8  pause / resume (releases all held keys while paused)
     F9  stop (releases all held keys and exits)
+
+Menu safety: input pauses whenever the game looks like it is in a menu (the
+mouse cursor is showing, or the --ingame-pixel check fails), so the bot can't
+click around the store. --show-menu prints what it detects.
 """
 import argparse
 import math
@@ -53,6 +58,14 @@ running.set()
 focused = threading.Event()  # set = game window is in front (always set if no game given)
 focused.set()
 game_hwnd = None  # the game's window handle while it is focused (only with --game)
+no_menu = threading.Event()  # set = no menu detected (always set with --no-menu-check)
+no_menu.set()
+
+# Menu detection (see "Menu detection" below).
+MENU_CHECK = True        # pause while the mouse cursor is showing (--no-menu-check turns off)
+INGAME_PIXEL = None      # (x, y, (r, g, b)): pause unless this screen pixel has this color
+PIXEL_TOLERANCE = 30     # max difference per color channel for the pixel to count as matching
+MENU_RESUME_AFTER = 1.5  # seconds the menu must be gone before input resumes
 
 kb = Controller()
 
@@ -60,8 +73,10 @@ kb = Controller()
 # --------------------------------------------------------------------------- #
 # Input helpers
 # --------------------------------------------------------------------------- #
-def is_active():
-    return running.is_set() and focused.is_set() and not stop_event.is_set()
+def is_active(menu_ok=False):
+    """True if input may go out now. menu_ok=True also allows it while a menu is open."""
+    return (running.is_set() and focused.is_set() and (menu_ok or no_menu.is_set())
+            and not stop_event.is_set())
 
 
 # --------------------------------------------------------------------------- #
@@ -163,6 +178,10 @@ def _user32():
         u.WindowFromPoint.restype = wintypes.HWND
         u.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
         u.GetAncestor.restype = wintypes.HWND
+        u.GetCursorInfo.argtypes = [POINTER(CURSORINFO)]
+        u.GetDC.argtypes = [wintypes.HWND]
+        u.GetDC.restype = wintypes.HDC
+        u.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
         _user32_cache = u
     return _user32_cache
 
@@ -185,6 +204,30 @@ def game_area():
     if right <= left or bottom <= top:
         return None
     return left, top, right, bottom
+
+
+_gdi32_cache = None
+
+
+def _gdi32():
+    global _gdi32_cache
+    if _gdi32_cache is None:
+        from ctypes import WinDLL, c_int, wintypes
+        g = WinDLL('gdi32')
+        g.GetPixel.argtypes = [wintypes.HDC, c_int, c_int]
+        g.GetPixel.restype = wintypes.DWORD
+        _gdi32_cache = g
+    return _gdi32_cache
+
+
+try:
+    from ctypes import Structure, wintypes as _wt
+
+    class CURSORINFO(Structure):
+        _fields_ = [('cbSize', _wt.DWORD), ('flags', _wt.DWORD),
+                    ('hCursor', _wt.HANDLE), ('ptScreenPos', _wt.POINT)]
+except (ImportError, ValueError):  # wintypes is Windows-only on some Pythons
+    CURSORINFO = None
 
 
 def cursor_pos():
@@ -225,6 +268,114 @@ def clamp_to_game(dx, dy):
     return x - point.x, y - point.y
 
 
+# --------------------------------------------------------------------------- #
+# Menu detection (Windows)
+# --------------------------------------------------------------------------- #
+# In first-person games the mouse cursor is hidden while you play and shown in
+# menus, the lobby and the store. So "cursor showing" is a good sign we must not
+# click or press anything. Games that draw their own menu cursor (and keep the
+# Windows one hidden) won't be caught by this; for those, --ingame-pixel checks a
+# spot of the HUD that is only there while playing.
+def cursor_showing():
+    """True if Windows is showing the mouse cursor."""
+    from ctypes import byref, sizeof
+    info = CURSORINFO()
+    info.cbSize = sizeof(CURSORINFO)
+    if not _user32().GetCursorInfo(byref(info)):
+        return False
+    return bool(info.flags & 1) and bool(info.hCursor)  # 1 = CURSOR_SHOWING
+
+
+def screen_pixel(x, y):
+    """(r, g, b) of a screen pixel, or None if Windows can't read it."""
+    u = _user32()
+    hdc = u.GetDC(None)
+    if not hdc:
+        return None
+    try:
+        color = _gdi32().GetPixel(hdc, x, y)
+    finally:
+        u.ReleaseDC(None, hdc)
+    if color == 0xFFFFFFFF:  # CLR_INVALID (off screen, or exclusive fullscreen)
+        return None
+    return color & 0xFF, (color >> 8) & 0xFF, (color >> 16) & 0xFF
+
+
+def pixel_matches():
+    """True if the --ingame-pixel spot has the expected color (True if not set)."""
+    if INGAME_PIXEL is None or INGAME_PIXEL[2] is None:
+        return True
+    x, y, expected = INGAME_PIXEL
+    actual = screen_pixel(x, y)
+    return actual is not None and all(abs(a - e) <= PIXEL_TOLERANCE
+                                      for a, e in zip(actual, expected))
+
+
+def menu_reason():
+    """Why the game looks like it's in a menu, or '' if it looks like gameplay."""
+    if MENU_CHECK and cursor_showing():
+        return "mouse cursor is showing"
+    if not pixel_matches():
+        return "--ingame-pixel doesn't match"
+    return ''
+
+
+def watch_menu():
+    """Pause input while a menu is open; resume once it has been gone a moment."""
+    clear_since = None
+    while not stop_event.is_set():
+        reason = menu_reason() if focused.is_set() else ''
+        if reason:
+            clear_since = None
+            if no_menu.is_set():
+                no_menu.clear()
+                inputs.release_all()
+                print(f"Menu detected ({reason}), pausing input.")
+        elif not no_menu.is_set() and focused.is_set():
+            clear_since = clear_since or time.monotonic()
+            if time.monotonic() - clear_since >= MENU_RESUME_AFTER:
+                no_menu.set()
+                print("Menu closed, resuming.")
+        stop_event.wait(0.1)
+
+
+def show_menu():
+    """Print what menu detection sees whenever it changes (Ctrl+C to quit)."""
+    print("Open and close menus in the game; what the bot sees is printed below. Ctrl+C to quit.")
+    last = None
+    try:
+        while True:
+            parts = [f"cursor showing: {'yes' if cursor_showing() else 'no '}"]
+            if INGAME_PIXEL is not None:
+                x, y, _ = INGAME_PIXEL
+                rgb = screen_pixel(x, y)
+                color = '%02X%02X%02X' % rgb if rgb else 'unreadable'
+                parts.append(f"pixel {x},{y}: {color}")
+            reason = menu_reason()
+            parts.append(f"=> {'MENU (' + reason + ')' if reason else 'playing'}")
+            line = '   '.join(parts)
+            if line != last:
+                print(line)
+                last = line
+            stop_event.wait(0.5)
+    except KeyboardInterrupt:
+        pass
+
+
+def parse_pixel(text, need_color):
+    """Parse 'X,Y' or 'X,Y,RRGGBB' into (x, y, (r, g, b) or None)."""
+    parts = [p.strip() for p in text.split(',')]
+    if len(parts) not in (2, 3) or (need_color and len(parts) != 3):
+        raise argparse.ArgumentTypeError("use X,Y,RRGGBB, e.g. 120,64,FFFFFF "
+                                         "(run --show-menu --ingame-pixel X,Y to read the color)")
+    x, y = int(parts[0]), int(parts[1])
+    color = None
+    if len(parts) == 3:
+        h = parts[2].lstrip('#')
+        color = (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+    return x, y, color
+
+
 def show_focus():
     """Print the focused program and window title whenever it changes (Ctrl+C to quit)."""
     print("Click around; the focused program is printed below. Ctrl+C to quit.")
@@ -254,9 +405,9 @@ class InputState:
         self._keys = {}
         self._buttons = {}
 
-    def press(self, key):
+    def press(self, key, menu_ok=False):
         with self._lock:
-            if not is_active():
+            if not is_active(menu_ok):
                 return
             if self._keys.get(key, 0) == 0:
                 kb.press(key)
@@ -275,8 +426,8 @@ class InputState:
 
     def mouse_down(self, button):
         with self._lock:
-            if not is_active() or not cursor_in_game():
-                return  # never click outside the game window
+            if not is_active() or not cursor_in_game() or menu_reason():
+                return  # never click outside the game window or in a menu
             if self._buttons.get(button, 0) == 0:
                 pydirectinput.mouseDown(button=button)
             self._buttons[button] = self._buttons.get(button, 0) + 1
@@ -310,16 +461,17 @@ def wait(seconds):
     return not stop_event.wait(seconds)
 
 
-def wait_until_active():
-    """Block while paused or the game isn't focused. Returns False once stopped."""
-    while not (running.is_set() and focused.is_set()) and not stop_event.is_set():
+def wait_until_active(menu_ok=False):
+    """Block while paused, the game isn't focused, or (unless menu_ok) a menu is open.
+    Returns False once stopped."""
+    while not is_active(menu_ok) and not stop_event.is_set():
         stop_event.wait(0.2)
     return not stop_event.is_set()
 
 
-def hold(keys, duration):
+def hold(keys, duration, menu_ok=False):
     for key in keys:
-        inputs.press(key)
+        inputs.press(key, menu_ok)
     try:
         wait(duration)
     finally:
@@ -327,8 +479,8 @@ def hold(keys, duration):
             inputs.release(key)
 
 
-def tap(key):
-    hold([key], 0.05)
+def tap(key, menu_ok=False):
+    hold([key], 0.05, menu_ok)
 
 
 def hold_mouse(button, duration):
@@ -515,6 +667,8 @@ def human_time(median, spread=0.5, low=0.0, high=float('inf')):
 
 def mouse_move(dx, dy):
     """Move the mouse by (dx, dy), kept inside the game window when --game is set."""
+    if not is_active():
+        return  # don't drag the cursor across menu buttons
     dx, dy = clamp_to_game(dx, dy)
     if not (dx or dy):
         return
@@ -701,7 +855,7 @@ class HumanPlayer:
     def fidget(self):
         action = random.choice(['switch', 'switch_back', 'inspect', 'aim', 'click',
                                 'crouch', 'jump'])
-        if action == 'click':                         # single click (also gets past menu screens)
+        if action == 'click':                         # single click (never in menus)
             fire_once()
         elif action == 'switch':
             hold([random.choice(['1', '2'])], human_time(0.1, 0.25, 0.05, 0.25))
@@ -752,9 +906,9 @@ HUMAN_MODE = [human_player]
 # Optional extras
 # --------------------------------------------------------------------------- #
 def autojoin():
-    """Press F5 every 2 seconds."""
-    while wait_until_active():
-        tap(Key.f5)
+    """Press F5 every 2 seconds. Keeps going in menus, since joining happens there."""
+    while wait_until_active(menu_ok=True):
+        tap(Key.f5, menu_ok=True)
         print("Pressing F5")
         wait(2)
 
@@ -795,7 +949,7 @@ def on_hotkey(key):
 
 
 def main():
-    global LOOK_SCALE, MAX_STILL
+    global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE
     parser = argparse.ArgumentParser(description="Anti-AFK input bot.")
     parser.add_argument('--mode', choices=['human', 'fast', 'slow'], default='human')
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
@@ -811,9 +965,26 @@ def main():
                         help=f"human mode: max seconds without moving (default {MAX_STILL})")
     parser.add_argument('--show-focus', action='store_true',
                         help="just print the focused program/window title, to find the --game value")
+    parser.add_argument('--no-menu-check', action='store_true',
+                        help="don't pause while the mouse cursor is showing (menus, store)")
+    parser.add_argument('--ingame-pixel', metavar='X,Y,RRGGBB',
+                        help="only send input while this screen pixel has this color "
+                             "(pick a HUD spot that is only there while playing)")
+    parser.add_argument('--pixel-tolerance', type=int, default=PIXEL_TOLERANCE,
+                        help=f"max color difference per channel for --ingame-pixel "
+                             f"(default {PIXEL_TOLERANCE})")
+    parser.add_argument('--show-menu', action='store_true',
+                        help="just print what menu detection sees (cursor, pixel color)")
     args = parser.parse_args()
 
     LOOK_SCALE, MAX_STILL = args.look_scale, args.max_still
+    MENU_CHECK, PIXEL_TOLERANCE = not args.no_menu_check, args.pixel_tolerance
+    if args.ingame_pixel:
+        try:
+            x, y, color = parse_pixel(args.ingame_pixel, need_color=not args.show_menu)
+        except (argparse.ArgumentTypeError, ValueError, IndexError) as e:
+            parser.error(f"--ingame-pixel: {e}")
+        INGAME_PIXEL = (x, y, color)  # color is None only with --show-menu: just print it
 
     modes = {'fast': FAST_MODE, 'slow': SLOW_MODE, 'human': HUMAN_MODE}
     tasks = list(modes[args.mode])
@@ -824,6 +995,9 @@ def main():
 
     if args.show_focus:
         show_focus()
+        return
+    if args.show_menu:
+        show_menu()
         return
 
     if not is_admin():
@@ -836,6 +1010,12 @@ def main():
         threading.Thread(target=watch_focus, args=(args.game,), daemon=True).start()
     else:
         print("Tip: pass --game <exe or window title> so input pauses when the game isn't in front.")
+
+    if MENU_CHECK or INGAME_PIXEL:
+        no_menu.clear()  # nothing goes out until the first check says we're playing
+        threading.Thread(target=watch_menu, daemon=True).start()
+    else:
+        print("Warning: menu check is off; the bot may click things in menus and the store.")
 
     listener = Listener(on_press=on_hotkey)
     listener.start()
