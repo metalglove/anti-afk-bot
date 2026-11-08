@@ -111,7 +111,8 @@ class FlowDiagram:
     SIDE = [(bot.STARTING, "Starting"), (bot.PAUSED, "Paused (F8)"),
             (bot.NOT_FOCUSED, "Not focused"), (bot.STOPPED, "Stopped (F9)")]
     SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over',
-                   'report_victory': 'over', 'report_defeat': 'over', 'report': 'over'}
+                   'report_victory': 'over', 'report_defeat': 'over', 'report': 'over',
+                   'best_play': 'over', 'post_match': 'over'}
     NODE_W, NODE_H = 128, 50
 
     def __init__(self, parent):
@@ -582,7 +583,8 @@ class App:
             ctk.CTkLabel(row, text=screen['name'], text_color=TEXT, anchor='w',
                          font=ctk.CTkFont(FONT, 14, 'bold')).grid(row=0, column=0, sticky='w', padx=14, pady=(10, 0))
             when = "during a match, " if screen['in_match'] else ""
-            ctk.CTkLabel(row, text=f"{when}when it sees: " + "  +  ".join(screen['if_seen']), text_color=MUTED,
+            ctk.CTkLabel(row, text=f"{when}when it sees: " + "  +  ".join(screen['if_seen'])
+                         + (f"  (not: {', '.join(screen['unless_seen'])})" if screen['unless_seen'] else ''), text_color=MUTED,
                          anchor='w', font=ctk.CTkFont(FONT, 12)).grid(row=1, column=0, sticky='w', padx=14, pady=(0, 10))
             if bot.screen_action(screen):
                 c = chip(row, bot.screen_action(screen), '#1e3a5f')

@@ -392,6 +392,7 @@ def load_rules():
             if screen['in_match']:
                 screen['click'] = screen['press'] = None  # in-match rules only pause input
             screen['if_seen'] = list(screen.get('if_seen', []))
+            screen['unless_seen'] = list(screen.get('unless_seen', []))
         return data
     except (OSError, ValueError) as e:
         print(f"Warning: can't read {os.path.basename(RULES_FILE)} ({e}); no screens will be clicked.")
@@ -418,6 +419,12 @@ def seen(read, phrase):
         return False
     return any(difflib.SequenceMatcher(None, want, _letters(text)).ratio() >= 0.82
                for text, _, _ in read['items'])
+
+
+def seen_anywhere(read, phrase):
+    """Like seen(), but also true when OCR split the phrase over separate items
+    ('BEST PLAY' | 'EARNED'). Used for "unless_seen", where a false yes is the safe side."""
+    return seen(read, phrase) or _letters(phrase) in _letters(read['text'])
 
 
 _ocr_engine = None
@@ -473,6 +480,8 @@ def find_text(read, phrase):
 
 def screen_action(screen):
     """What the bot does on a screen: "click X", "press ESC", or None (wait)."""
+    if screen is None:
+        return None
     if screen['click']:
         return f"click {screen['click']}"
     if screen['press']:
@@ -489,7 +498,8 @@ def classify(read, in_match=False):
     for screen in rules['screens']:
         if in_match and not screen['in_match']:
             continue
-        if screen['if_seen'] and all(seen(read, p) for p in screen['if_seen']):
+        if screen['if_seen'] and all(seen(read, p) for p in screen['if_seen']) and \
+                not any(seen_anywhere(read, p) for p in screen['unless_seen']):
             return screen, danger
     return None, danger
 
@@ -623,7 +633,13 @@ HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'matches
 MATCH_END_SCREENS = {'victory': 'victory', 'defeat': 'defeat', 'kicked': 'kicked',
                      'report_victory': 'victory', 'report_defeat': 'defeat', 'report': 'over',
                      'main_menu': 'left', 'searching': 'left'}
-match = {'start': None}  # wall-clock start of the current match
+match = {'start': None,    # wall-clock start of the current match
+         'over_at': None}  # monotonic time the last match ended (VICTORY / DEFEAT)
+# After VICTORY / DEFEAT the game shows a few screens without a cursor (best play,
+# scoreboard). Those aren't a new match: input stays paused until a pre-match screen
+# shows up (or POST_MATCH_TIMEOUT passes, in case those screens were missed).
+PRE_MATCH_SCREENS = {'searching', 'lobby', 'lobby_found', 'class_select', 'main_menu', 'kicked'}
+POST_MATCH_TIMEOUT = 300.0
 
 
 def load_history():
@@ -644,6 +660,8 @@ def load_history():
 
 def _track_match(name, detail):
     """Start or end the current match on state changes (called from enter_state)."""
+    if name == SCREEN and detail.split(' (')[0] in PRE_MATCH_SCREENS:
+        match['over_at'] = None  # the next match is on its way
     if name == PLAYING and match['start'] is None:
         match['start'] = time.time()
         print(f"   Match started at {time.strftime('%H:%M')}.")
@@ -664,6 +682,7 @@ def end_match(result):
     match['start'] = None
     if result in ('victory', 'defeat', 'over'):  # counted once, even if the banner and report both show
         stats['matches'] += 1
+        match['over_at'] = time.monotonic()
     stats['match_time'] += duration
     stats['last_match'] = (result, duration)
     print(f"   Match over ({result}) after {format_duration(duration)}. "
@@ -702,6 +721,10 @@ def detect(read=None):
         screen, _ = classify(read, in_match=True)
         if screen:  # e.g. the VICTORY / DEFEAT banner: the match is over
             return SCREEN, f"{screen['name']} (match over, input paused)", screen
+        if match['over_at'] is not None:
+            if time.monotonic() - match['over_at'] < POST_MATCH_TIMEOUT:
+                return SCREEN, "post_match (match over, waiting for the next one)", None
+            match['over_at'] = None
         return PLAYING, '', None
     if read is None:
         return MENU, 'reading the screen...', None
@@ -1351,6 +1374,7 @@ def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False
     stats.update(started=time.monotonic(), clicks=0, matches=0, kicks=0, playing=0.0,
                  match_time=0.0, last_match=None)
     match['start'] = None
+    match['over_at'] = None
     tasks = [] if dry_run else list(HUMAN_MODE)
     if autojoin_on and not dry_run:
         tasks.append(autojoin)

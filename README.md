@@ -135,6 +135,13 @@ positions, it works at any resolution or window size.
 Rules with `"in_match": true` are also checked during a match, every 5 seconds, even
 without a cursor. The VICTORY and DEFEAT banners are set up this way, so the bot stops
 moving and shooting as soon as a match ends. These rules only pause input; they never click.
+The BEST PLAY replay after the banner is one too (`best_play`). It uses `unless_seen`, so the
+"BEST PLAY EARNED" / "BEST PLAY LOST" notices during a match don't count: a rule never
+matches while any of its `unless_seen` words is on screen.
+
+After VICTORY / DEFEAT the bot stays in `post_match` with input paused until a pre-match
+screen (searching, lobby, class select, main menu) shows up, so the screens after the banner
+aren't mistaken for a new match. If none shows up within 5 minutes it plays again anyway.
 
 Rules are checked from top to bottom and the first match wins. The After Action Report
 also shows "SEARCHING FOR A MATCH" in its corner, so its rules (`report_victory`,
