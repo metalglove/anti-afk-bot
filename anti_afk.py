@@ -1,7 +1,7 @@
 """Anti-AFK input bot.
 
 Usage:
-    python anti_afk.py [--mode human|fast|slow] [--game cod.exe] [--delay N]
+    python anti_afk.py [--game cod.exe] [--delay N]
                        [--autojoin] [--anti-kick] [--show-focus]
                        [--ingame-pixel X,Y,RRGGBB] [--no-menu-check] [--show-menu]
                        [--learn NAME]
@@ -42,18 +42,18 @@ try:
 except (ImportError, AttributeError, OSError):
     pass
 
-# Human mode: never stand still longer than this many seconds (--max-still).
+# never stand still longer than this many seconds (--max-still).
 # Keep it well below the game's AFK-kick timer.
 MAX_STILL = 10
 
-# Human mode: always fire at least once within this many seconds.
+# always fire at least once within this many seconds.
 MAX_NO_SHOT = 20
 
-# Human mode: multiplier for how far the view turns (--look-scale). Raise it if
+# multiplier for how far the view turns (--look-scale). Raise it if
 # turning looks sluggish at your in-game sensitivity, lower it if it spins.
 LOOK_SCALE = 3.0
 
-# Human mode: set to True if the camera doesn't turn in-game (sends raw
+# set to True if the camera doesn't turn in-game (sends raw
 # relative mouse input instead of moving the cursor position).
 MOUSE_RELATIVE = False
 
@@ -824,170 +824,11 @@ def hold_mouse(button, duration):
         inputs.mouse_up(button)
 
 
-def sweep(dx, dy, steps, step_duration):
-    """Move the mouse in small relative steps, stopping early if paused/stopped."""
-    for _ in range(steps):
-        if not is_active():
-            return
-        mouse_move(dx, dy)
-        wait(0.15)  # pydirectinput ignores step_duration; 0.15s matches the old pacing
-
-
-# --------------------------------------------------------------------------- #
-# Shared actions
-# --------------------------------------------------------------------------- #
-def weapon_switching():
-    while wait_until_active():
-        if not wait(random.uniform(25, 60)):
-            return
-        key = random.choice(['1', '2'])
-        tap(key)
-        if is_active():
-            print(f"Switched weapon using key {key}")
-
-
-# --------------------------------------------------------------------------- #
-# Fast mode
-# --------------------------------------------------------------------------- #
+# Directions the human player walks in.
 DIRECTIONS = [
     ('w',), ('s',), ('a',), ('d',),
     ('w', 'a'), ('w', 'd'), ('s', 'a'), ('s', 'd'),
 ]
-
-
-def random_movement():
-    # Initial forward step.
-    if wait_until_active():
-        print("Performing initial action: 'w' key press.")
-        hold(['w'], 1.2)
-
-    last_direction = None
-    while wait_until_active():
-        direction = random.choice([d for d in DIRECTIONS if d != last_direction])
-        duration = random.uniform(0.05, 1.5)
-
-        hold([Key.space], 1)
-
-        # Half the time, swap a forward move for a slightly longer backward one.
-        if 'w' in direction and random.random() < 0.5:
-            direction = ('s',)
-            duration += random.uniform(0.2, 0.5)
-
-        hold(direction, duration)
-
-        # After a pure backward move, step forward a bit longer to stay in place.
-        if direction == ('s',):
-            hold(['w'], duration + 0.1)
-
-        last_direction = direction
-        wait(random.uniform(0.5, 1))
-
-
-def random_actions():
-    while wait_until_active():
-        if random.random() < 0.2:  # shoot (aim, then fire)
-            inputs.mouse_down('right')
-            try:
-                wait(random.uniform(0.05, 0.1))
-                hold_mouse('left', random.uniform(0.05, 0.1))
-            finally:
-                inputs.mouse_up('right')
-
-        if random.random() < 0.15:  # jump
-            hold([Key.space], random.uniform(0.1, 0.3))
-
-        if random.random() < 0.1:  # short crouch (long hold would go prone)
-            hold(['c'], random.uniform(0.1, 0.3))
-
-        wait(random.uniform(1, 1.5))
-
-
-def look_left_right():
-    while wait_until_active():
-        sweep(-100, 0, steps=10, step_duration=0.1)
-        wait(random.uniform(1, 2))
-        sweep(100, 0, steps=10, step_duration=0.1)
-        wait(random.uniform(1, 2))
-
-
-def look_up_down():
-    while wait_until_active():
-        sweep(0, -100, steps=10, step_duration=0.1)
-        wait(random.uniform(1, 2))
-        sweep(0, 100, steps=10, step_duration=0.1)
-        wait(random.uniform(1, 2))
-
-
-FAST_MODE = [random_movement, random_actions, look_left_right, look_up_down, weapon_switching]
-
-
-# --------------------------------------------------------------------------- #
-# Slow mode
-# --------------------------------------------------------------------------- #
-OPPOSITE_MOVES = {
-    'w': 's', 's': 'w', 'a': 'd', 'd': 'a',
-    'wd': 'sa', 'wa': 'sd', 'sd': 'wa', 'sa': 'wd',
-}
-
-
-def slow_wasd():
-    """Move in a direction, then back the opposite way for the same time."""
-    recent_moves = []
-    recent_durations = []
-
-    while wait_until_active():
-        move = random.choice([m for m in OPPOSITE_MOVES if m not in recent_moves])
-        recent_moves = (recent_moves + [move])[-2:]
-
-        # Pick a duration not within 0.1s of either of the last two.
-        duration = random.uniform(1, 2.5)
-        while any(abs(duration - d) < 0.1 for d in recent_durations):
-            duration = random.uniform(1, 2.5)
-        recent_durations = (recent_durations + [duration])[-2:]
-
-        hold(move, duration)
-        wait(random.uniform(0.5, 1.5))
-        hold(OPPOSITE_MOVES[move], duration)
-
-        wait(random.uniform(2, 6))
-
-
-def slow_look_up_down():
-    while wait_until_active():
-        sweep(0, -1000, steps=20, step_duration=1)
-        wait(random.uniform(1, 2))
-        sweep(0, 1000, steps=20, step_duration=1)
-        wait(random.uniform(1, 2))
-
-
-def crouch_randomly():
-    while wait_until_active():
-        if random.random() < 0.2:
-            hold(['c'], random.uniform(0.6, 1.3))
-        wait(random.uniform(4, 6))
-
-
-def slow_aim():
-    while wait_until_active():
-        cycle = random.uniform(5, 8)
-        hold_mouse('right', 2)
-        remaining = cycle - 2
-        if is_active():
-            print(f"Aimed. Next aim in {remaining:.2f} seconds")
-        wait(remaining)
-
-
-def inspect_weapon():
-    while wait_until_active():
-        delay = random.uniform(3, 7)
-        if not wait(delay):
-            return
-        hold(['i'], 0.5)
-        if is_active():
-            print(f"Inspected weapon after {delay:.2f} seconds")
-
-
-SLOW_MODE = [slow_wasd, slow_look_up_down, crouch_randomly, weapon_switching, slow_aim, inspect_weapon]
 
 
 # --------------------------------------------------------------------------- #
@@ -1284,7 +1125,6 @@ def on_hotkey(key):
 # --------------------------------------------------------------------------- #
 # Starting and stopping (used by the command line and by app.py)
 # --------------------------------------------------------------------------- #
-MODES = {'fast': FAST_MODE, 'slow': SLOW_MODE, 'human': HUMAN_MODE}
 _threads = []
 
 
@@ -1309,7 +1149,7 @@ def is_started():
     return any(t.is_alive() for t in _threads)
 
 
-def start(mode='human', game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False):
+def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False):
     """Start a session in background threads and return right away.
     dry_run: only detect and report states and clicks; send no input at all."""
     global DRY_RUN, screens, game_hwnd
@@ -1324,7 +1164,7 @@ def start(mode='human', game='', autojoin_on=False, anti_kick_on=False, delay=5,
 
     screens = load_screens()
     describe_screens()
-    tasks = [] if dry_run else list(MODES[mode])
+    tasks = [] if dry_run else list(HUMAN_MODE)
     if autojoin_on and not dry_run:
         tasks.append(autojoin)
     if anti_kick_on and not dry_run:
@@ -1345,10 +1185,10 @@ def start(mode='human', game='', autojoin_on=False, anti_kick_on=False, delay=5,
 
     enter_state(STARTING)
     _spawn(run_state_machine)
-    _spawn(_countdown, delay, tasks, mode)
+    _spawn(_countdown, delay, tasks)
 
 
-def _countdown(delay, tasks, mode):
+def _countdown(delay, tasks):
     for remaining in range(delay, 0, -1):
         enter_state(STARTING, f"{remaining}s, switch to the game")
         if not wait(1):
@@ -1357,7 +1197,7 @@ def _countdown(delay, tasks, mode):
     for task in tasks:
         _spawn(run_task, task)
     if tasks:
-        print(f"Running {mode} mode. F8 = pause/resume, F9 = stop.")
+        print("Running. F8 = pause/resume, F9 = stop.")
 
 
 def stop():
@@ -1377,7 +1217,6 @@ def stop():
 def main():
     global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE, MATCH_THRESHOLD, screens
     parser = argparse.ArgumentParser(description="Anti-AFK input bot. Run app.py for the window version.")
-    parser.add_argument('--mode', choices=['human', 'fast', 'slow'], default='human')
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
     parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
     parser.add_argument('--delay', type=int, default=5,
@@ -1386,9 +1225,9 @@ def main():
                         help="game exe name (e.g. cod.exe) or part of its window title; "
                              "input only goes out while it is focused")
     parser.add_argument('--look-scale', type=float, default=LOOK_SCALE,
-                        help=f"human mode: how far turns go (default {LOOK_SCALE})")
+                        help=f"how far turns go (default {LOOK_SCALE})")
     parser.add_argument('--max-still', type=float, default=MAX_STILL,
-                        help=f"human mode: max seconds without moving (default {MAX_STILL})")
+                        help=f"max seconds without moving (default {MAX_STILL})")
     parser.add_argument('--show-focus', action='store_true',
                         help="just print the focused program/window title, to find the --game value")
     parser.add_argument('--no-menu-check', action='store_true',
@@ -1436,7 +1275,7 @@ def main():
     listener = Listener(on_press=on_hotkey)
     listener.start()
     try:
-        start(args.mode, args.game, args.autojoin, args.anti_kick, args.delay, dry_run=args.test)
+        start(args.game, args.autojoin, args.anti_kick, args.delay, dry_run=args.test)
         while not stop_event.wait(0.5):
             pass
     except KeyboardInterrupt:

@@ -17,7 +17,7 @@ import anti_afk as bot
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(HERE, 'settings.json')
-DEFAULTS = {'game': '', 'mode': 'human', 'autojoin': False, 'anti_kick': False, 'delay': 5,
+DEFAULTS = {'game': '', 'autojoin': False, 'anti_kick': False, 'delay': 5,
             'match_threshold': bot.MATCH_THRESHOLD}
 
 # Colors (dark theme).
@@ -89,7 +89,6 @@ class App:
 
         settings = load_settings()
         self.game = tk.StringVar(value=settings['game'])
-        self.mode = tk.StringVar(value=settings['mode'])
         self.autojoin = tk.BooleanVar(value=settings['autojoin'])
         self.anti_kick = tk.BooleanVar(value=settings['anti_kick'])
         self.delay = tk.StringVar(value=str(settings['delay']))
@@ -178,10 +177,6 @@ class App:
                                         fg_color='#27272a', hover_color='#3f3f46',
                                         command=self.detect_game)
         self.detect_btn.grid(row=0, column=1, padx=(6, 0))
-        self.mode_select = ctk.CTkSegmentedButton(settings, values=['human', 'fast', 'slow'], variable=self.mode,
-                                                  height=32, selected_color=ACCENT,
-                                                  selected_hover_color=ACCENT_HOVER)
-        self.mode_select.grid(row=2, column=0, columnspan=2, sticky='we', padx=16, pady=8)
 
         def number_row(row, label, var):
             ctk.CTkLabel(settings, text=label, text_color=TEXT, anchor='w').grid(
@@ -189,12 +184,12 @@ class App:
             entry = ctk.CTkEntry(settings, textvariable=var, width=60, height=30, justify='center')
             entry.grid(row=row, column=1, sticky='e', padx=16, pady=3)
             return entry
-        number_row(3, "Start delay (s)", self.delay)
-        number_row(4, "Screen match threshold", self.threshold)
+        number_row(2, "Start delay (s)", self.delay)
+        number_row(3, "Screen match threshold", self.threshold)
         ctk.CTkSwitch(settings, text="Autojoin (F5, also in menus)", variable=self.autojoin,
-                      progress_color=ACCENT).grid(row=5, column=0, columnspan=2, sticky='w', padx=16, pady=(8, 3))
+                      progress_color=ACCENT).grid(row=4, column=0, columnspan=2, sticky='w', padx=16, pady=(8, 3))
         ctk.CTkSwitch(settings, text="Anti-kick (L every 20s)", variable=self.anti_kick,
-                      progress_color=ACCENT).grid(row=6, column=0, columnspan=2, sticky='w', padx=16, pady=(3, 14))
+                      progress_color=ACCENT).grid(row=5, column=0, columnspan=2, sticky='w', padx=16, pady=(3, 14))
 
         screens = card(middle)
         screens.grid(row=0, column=1, sticky='nswe', padx=4)
@@ -231,7 +226,7 @@ class App:
             return default
 
     def save_settings(self):
-        data = {'game': self.game.get().strip(), 'mode': self.mode.get() or 'human',
+        data = {'game': self.game.get().strip(),
                 'autojoin': self.autojoin.get(), 'anti_kick': self.anti_kick.get(),
                 'delay': max(0, self.number(self.delay, 5, int)),
                 'match_threshold': self.number(self.threshold, 25)}
@@ -248,7 +243,7 @@ class App:
         if not data['game']:
             print("Tip: set the game (Detect) so the bot only acts while it is in front.")
         threading.Thread(target=bot.start, daemon=True, kwargs=dict(
-            mode=data['mode'], game=data['game'], autojoin_on=data['autojoin'],
+            game=data['game'], autojoin_on=data['autojoin'],
             anti_kick_on=data['anti_kick'], delay=data['delay'], dry_run=dry_run)).start()
 
     def stop(self):
