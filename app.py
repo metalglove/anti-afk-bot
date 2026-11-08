@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 
 import customtkinter as ctk
 
@@ -19,7 +20,7 @@ import anti_afk as bot
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(HERE, 'settings.json')
-DEFAULTS = {'game': 'cod.exe', 'autojoin': False, 'anti_kick': False, 'delay': 5,
+DEFAULTS = {'game': 'cod.exe', 'delay': 5,
             'read_interval': bot.READ_INTERVAL}
 
 # Colors (dark theme).
@@ -94,28 +95,33 @@ def chip(parent, text, color, text_color=TEXT):
 class FlowDiagram:
     """The bot's state machine drawn as a diagram; the current state lights up."""
 
-    W, H = 620, 330  # logical size; drawing scales to the canvas width
+    # Logical layout; the drawing scales to fit the canvas. Columns 90/270/450/630,
+    # rows: getting into a match, in the match, special screens.
+    W, H = 720, 380
     NODES = {  # key: (x, y, title, action)
-        'kicked': (90, 45, "Kicked", "click EXIT"),
-        'main_menu': (235, 45, "Main menu", "click QUICK PLAY"),
-        'searching': (380, 45, "Searching", "wait"),
-        'lobby': (530, 45, "Lobby", "wait"),
-        'play': (90, 145, "PLAYING", "move, look, shoot"),
-        'over': (380, 145, "Victory / defeat", "pause, ESC report"),
-        'class_select': (530, 145, "Class select", "press SPACE"),
-        'menu': (90, 245, "Unknown / store", "send nothing"),
-        'resume': (380, 245, "RESUMING", "wait 1.5s"),
+        'main_menu': (90, 50, "Main menu", "click QUICK PLAY"),
+        'searching': (270, 50, "Searching", "wait"),
+        'lobby': (450, 50, "Lobby", "wait"),
+        'class_select': (630, 50, "Class select", "press SPACE"),
+        'report': (270, 165, "Match report", "press ESC"),
+        'play': (450, 165, "PLAYING", "move, look, shoot"),
+        'resume': (630, 165, "Resuming", "wait 1.5s"),
+        'kicked': (90, 280, "Kicked", "click EXIT"),
+        'over': (270, 280, "Match over", "input paused"),
+        'pause_menu': (450, 280, "In-game menu", "press ESC"),
+        'menu': (630, 280, "Unknown / store", "send nothing"),
     }
-    EDGES = [('play', 'kicked'), ('kicked', 'main_menu'), ('main_menu', 'searching'),
-             ('searching', 'lobby'), ('lobby', 'class_select'), ('class_select', 'resume'),
-             ('resume', 'play'), ('play', 'over'), ('over', 'lobby'), ('play', 'menu'),
-             ('menu', 'resume')]
+    EDGES = [('main_menu', 'searching'), ('searching', 'lobby'), ('lobby', 'class_select'),
+             ('class_select', 'resume'), ('resume', 'play'), ('play', 'over'),
+             ('over', 'report'), ('report', 'searching'), ('play', 'kicked'),
+             ('kicked', 'main_menu'), ('play', 'pause_menu'), ('pause_menu', 'resume'),
+             ('menu', 'resume')]  # unknown menus can come from anywhere
     SIDE = [(bot.STARTING, "Starting"), (bot.PAUSED, "Paused (F8)"),
             (bot.NOT_FOCUSED, "Not focused"), (bot.STOPPED, "Stopped (F9)")]
     SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over',
-                   'report_victory': 'over', 'report_defeat': 'over', 'report': 'over',
-                   'best_play': 'over', 'post_match': 'over'}
-    NODE_W, NODE_H = 128, 50
+                   'best_play': 'over', 'post_match': 'over',
+                   'report_victory': 'report', 'report_defeat': 'report'}
+    NODE_W, NODE_H = 150, 56
 
     def __init__(self, parent):
         self.canvas = tk.Canvas(parent, bg=CARD, highlightthickness=0, height=200)
@@ -149,54 +155,95 @@ class FlowDiagram:
         c = self.canvas
         c.delete('all')
         width, height = max(c.winfo_width(), 200), max(c.winfo_height(), 120)
-        k = min(width / self.W, height / self.H)  # fit both ways, centered
-        ox, oy = (width - self.W * k) / 2, (height - self.H * k) / 2
+        k = min(width / self.W, height / self.H)  # fit both ways
+        ox, oy = (width - self.W * k) / 2, min(12, (height - self.H * k) / 2)  # top-aligned
         w, h = self.NODE_W * k / 2, self.NODE_H * k / 2
+        # Negative sizes are pixels, so the text scales with the boxes whatever the
+        # Windows display scaling is.
+        title_font = tkfont.Font(family=FONT, size=-max(9, round(15 * k)), weight='bold')
+        sub_font = tkfont.Font(family=FONT, size=-max(8, round(12 * k)))
+        dim = '#3a4150'
 
         def center(key):
             x, y = self.NODES[key][:2]
             return ox + x * k, oy + y * k
 
-        def border_point(key, toward):
+        def border_point(key, toward, gap=4):
             # Where the line from this node's center toward `toward` leaves the box.
             (x, y), (tx, ty) = center(key), toward
             dx, dy = tx - x, ty - y
             if dx == 0 and dy == 0:
                 return x, y
-            scale = min(w / abs(dx) if dx else float('inf'), h / abs(dy) if dy else float('inf'))
+            scale = min((w + gap) / abs(dx) if dx else float('inf'),
+                        (h + gap) / abs(dy) if dy else float('inf'))
             return x + dx * scale, y + dy * scale
 
         for a, b in self.EDGES:
             start, end = border_point(a, center(b)), border_point(b, center(a))
             lit = a == self.active
-            c.create_line(*start, *end, arrow='last', arrowshape=(9 * k, 11 * k, 4 * k),
-                          width=max(1.5, 2 * k), fill=self.color if lit else '#4b5563')
+            c.create_line(*start, *end, arrow='last', arrowshape=(8 * k, 10 * k, 4 * k),
+                          width=max(1.5, (2.5 if lit else 1.5) * k),
+                          fill=self.color if lit else dim)
 
-        title_font = (FONT, max(8, int(11 * k)), 'bold')
-        sub_font = (FONT, max(7, int(9 * k)))
         for key, (x, y, title, action) in self.NODES.items():
             x, y = ox + x * k, oy + y * k
             lit = key == self.active
-            self.rounded(c, x - w, y - h, x + w, y + h, 12 * k,
+            self.rounded(c, x - w, y - h, x + w, y + h, 10 * k,
                          fill=self.color if lit else BG, outline=self.color if lit else CARD_BORDER,
-                         width=2)
-            c.create_text(x, y - 8 * k, text=title, fill='white' if lit else TEXT, font=title_font)
-            c.create_text(x, y + 10 * k, text=action, fill='white' if lit else MUTED, font=sub_font)
+                         width=2 if lit else 1)
+            c.create_text(x, y - 9 * k, text=title, fill='white' if lit else TEXT, font=title_font)
+            c.create_text(x, y + 11 * k, text=action, fill='white' if lit else MUTED, font=sub_font)
 
         # States that can happen at any time.
-        y = oy + 305 * k
-        c.create_text(ox + 14 * k, y, text="Any time:", anchor='w', fill=MUTED, font=sub_font)
-        x = ox + 80 * k
+        y = oy + 352 * k
+        x = ox + (self.NODES['kicked'][0] - self.NODE_W / 2) * k
+        c.create_text(x, y, text="Any time", anchor='w', fill=MUTED, font=sub_font)
+        x += sub_font.measure("Any time") + 12 * k
         side = list(self.SIDE)
         if self.other:
             side.append(('__other__', f"Screen: {self.other}"))
         for key, label in side:
-            lit = key == self.active or (key == '__other__')
-            tw = (len(label) * 6.6 + 22) * k
-            self.rounded(c, x, y - 11 * k, x + tw, y + 11 * k, 10 * k,
+            lit = key == self.active or key == '__other__'
+            tw = sub_font.measure(label) + 22 * k
+            self.rounded(c, x, y - 13 * k, x + tw, y + 13 * k, 10 * k,
                          fill=self.color if lit else BG, outline=self.color if lit else CARD_BORDER, width=1)
             c.create_text(x + tw / 2, y, text=label, fill='white' if lit else MUTED, font=sub_font)
             x += tw + 8 * k
+
+class Pages:
+    """Navigation pills in the header and the pages they switch between
+    (same set / get / tab calls as a CTkTabview)."""
+
+    def __init__(self, nav, container, names):
+        container.grid_columnconfigure(0, weight=1)
+        container.grid_rowconfigure(0, weight=1)
+        self.frames, self.buttons, self.current = {}, {}, None
+        for i, name in enumerate(names):
+            frame = ctk.CTkFrame(container, fg_color='transparent')
+            frame.grid(row=0, column=0, sticky='nswe')
+            self.frames[name] = frame
+            button = ctk.CTkButton(nav, text=name, width=104, height=34, corner_radius=9,
+                                   font=ctk.CTkFont(FONT, 14, 'bold'), border_width=0,
+                                   command=lambda n=name: self.set(n))
+            button.grid(row=0, column=i, padx=(4 if i == 0 else 2, 4 if i == len(names) - 1 else 2),
+                        pady=4)
+            self.buttons[name] = button
+        self.set(names[0])
+
+    def set(self, name):
+        self.current = name
+        self.frames[name].tkraise()
+        for n, button in self.buttons.items():
+            if n == name:
+                button.configure(fg_color=ACCENT, hover_color=ACCENT_HOVER, text_color='white')
+            else:
+                button.configure(fg_color='transparent', hover_color=NEUTRAL, text_color=MUTED)
+
+    def get(self):
+        return self.current
+
+    def tab(self, name):
+        return self.frames[name]
 
 
 class App:
@@ -212,11 +259,9 @@ class App:
 
         settings = load_settings()
         self.game = tk.StringVar(value=settings['game'])
-        self.autojoin = tk.BooleanVar(value=settings['autojoin'])
-        self.anti_kick = tk.BooleanVar(value=settings['anti_kick'])
         self.delay = tk.StringVar(value=str(settings['delay']))
         self.read_interval = tk.StringVar(value=f"{settings['read_interval']:g}")
-        for var in (self.game, self.autojoin, self.anti_kick, self.delay, self.read_interval):
+        for var in (self.game, self.delay, self.read_interval):
             var.trace_add('write', lambda *_: self.save_settings())  # settings save themselves
 
         root.title("Anti-AFK")
@@ -237,27 +282,25 @@ class App:
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(1, weight=1)
 
-        # Header: name + warnings that need attention.
+        # Header: name, navigation, and warnings that need attention.
         header = ctk.CTkFrame(root, fg_color='transparent')
-        header.grid(row=0, column=0, sticky='we', padx=20, pady=(14, 0))
-        header.grid_columnconfigure(1, weight=1)
+        header.grid(row=0, column=0, sticky='we', padx=20, pady=(14, 10))
+        header.grid_columnconfigure(2, weight=1)
         ctk.CTkLabel(header, text="Anti-AFK", text_color=TEXT,
-                     font=ctk.CTkFont(FONT, 20, 'bold')).grid(row=0, column=0, sticky='w')
-        self.warnings = ctk.CTkFrame(header, fg_color='transparent')
-        self.warnings.grid(row=0, column=1, sticky='e')
-        self.admin_chip = chip(self.warnings, "⚠ Not admin: only a problem if the game runs as admin", '#422006', '#fcd34d')
+                     font=ctk.CTkFont(FONT, 20, 'bold')).grid(row=0, column=0, sticky='w', padx=(0, 28))
+        nav = ctk.CTkFrame(header, fg_color=CARD, corner_radius=12, border_width=1,
+                           border_color=CARD_BORDER)
+        nav.grid(row=0, column=1, sticky='w')
+        # Plain tk frame: an empty CTkFrame falls back to 200x200 when no warning shows.
+        self.warnings = tk.Frame(header, bg=BG)
+        self.warnings.grid(row=0, column=2, sticky='e')
         self.game_chip = chip(self.warnings, "⚠ No game set (Settings)", '#422006', '#fcd34d')
         self.game_chip.bind('<Button-1>', lambda e: self.tabs.set("Settings"))
+        tk.Frame(root, bg=CARD_BORDER, height=1).grid(row=0, column=0, sticky='swe')
 
-        self.tabs = ctk.CTkTabview(root, fg_color='transparent', segmented_button_selected_color=ACCENT,
-                                   segmented_button_selected_hover_color=ACCENT_HOVER, anchor='nw')
-        self.tabs.grid(row=1, column=0, sticky='nswe', padx=12, pady=(0, 12))
-        for name in ("Dashboard", "History", "Screens", "Settings"):
-            self.tabs.add(name)
-        try:  # roomier tab buttons
-            self.tabs._segmented_button.configure(font=ctk.CTkFont(FONT, 13, 'bold'), height=34)
-        except (AttributeError, ValueError):
-            pass
+        pages = ctk.CTkFrame(root, fg_color='transparent')
+        pages.grid(row=1, column=0, sticky='nswe', padx=12, pady=(10, 12))
+        self.tabs = Pages(nav, pages, ("Dashboard", "History", "Screens", "Settings"))
         self.build_dashboard(self.tabs.tab("Dashboard"))
         self.build_history(self.tabs.tab("History"))
         self.build_screens(self.tabs.tab("Screens"))
@@ -512,8 +555,12 @@ class App:
         setting("Menu read interval (seconds)", "How often the screen is read while a menu stays open. "
                                                 "It also reads right when a menu opens and after each click.",
                 number(self.read_interval))
-        setting("Autojoin", "Press F5 every 2 seconds, also in menus.", switch(self.autojoin))
-        setting("Anti-kick key", "Press L every 20 seconds while playing.", switch(self.anti_kick))
+        admin = bot.is_admin()
+        setting("Administrator", "Only needed if the game itself runs as administrator: Windows doesn't "
+                                 "let a normal program send input to it. Then start the terminal as "
+                                 "administrator and run python app.py from there.",
+                lambda parent: chip(parent, "Running as admin" if admin else "Not running as admin",
+                                    '#14361f' if admin else NEUTRAL, GOOD if admin else MUTED))
 
     # -- actions -----------------------------------------------------------------
     @staticmethod
@@ -525,7 +572,6 @@ class App:
 
     def save_settings(self):
         data = {'game': self.game.get().strip(),
-                'autojoin': self.autojoin.get(), 'anti_kick': self.anti_kick.get(),
                 'delay': max(0, self.number(self.delay, 5, int)),
                 'read_interval': max(0.5, self.number(self.read_interval, 3.0))}
         try:
@@ -546,8 +592,7 @@ class App:
         bot.READ_INTERVAL = data['read_interval']
         self.tabs.set("Dashboard")
         threading.Thread(target=bot.start, daemon=True, kwargs=dict(
-            game=data['game'], autojoin_on=data['autojoin'],
-            anti_kick_on=data['anti_kick'], delay=data['delay'], dry_run=dry_run)).start()
+            game=data['game'], delay=data['delay'], dry_run=dry_run)).start()
 
     def stop(self):
         threading.Thread(target=bot.stop, daemon=True).start()
@@ -585,8 +630,7 @@ class App:
             ctk.CTkLabel(row, text=screen['name'], text_color=TEXT, anchor='w',
                          font=ctk.CTkFont(FONT, 14, 'bold')).grid(row=0, column=0, sticky='w', padx=14, pady=(10, 0))
             when = "during a match, " if screen['in_match'] else ""
-            ctk.CTkLabel(row, text=f"{when}when it sees: " + "  +  ".join(screen['if_seen'])
-                         + (f"  (not: {', '.join(screen['unless_seen'])})" if screen['unless_seen'] else ''), text_color=MUTED,
+            ctk.CTkLabel(row, text=f"{when}when it sees: " + "  +  ".join(screen['if_seen']), text_color=MUTED,
                          anchor='w', font=ctk.CTkFont(FONT, 12)).grid(row=1, column=0, sticky='w', padx=14, pady=(0, 10))
             if bot.screen_action(screen):
                 c = chip(row, bot.screen_action(screen), '#1e3a5f')
@@ -734,10 +778,6 @@ class App:
         self.update_stats(running)
 
         # Warnings in the header.
-        if bot.is_admin():
-            self.admin_chip.pack_forget()
-        else:
-            self.admin_chip.pack(side='left', padx=4)
         if self.game.get().strip():
             self.game_chip.pack_forget()
         else:

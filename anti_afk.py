@@ -2,7 +2,7 @@
 
 Usage:
     python anti_afk.py [--game cod.exe] [--delay N]
-                       [--autojoin] [--anti-kick] [--show-focus]
+                       [--show-focus]
                        [--ingame-pixel X,Y,RRGGBB] [--no-menu-check] [--show-menu]
                        [--read-screen]
 
@@ -392,7 +392,6 @@ def load_rules():
             if screen['in_match']:
                 screen['click'] = screen['press'] = None  # in-match rules only pause input
             screen['if_seen'] = list(screen.get('if_seen', []))
-            screen['unless_seen'] = list(screen.get('unless_seen', []))
         return data
     except (OSError, ValueError) as e:
         print(f"Warning: can't read {os.path.basename(RULES_FILE)} ({e}); no screens will be clicked.")
@@ -419,12 +418,6 @@ def seen(read, phrase):
         return False
     return any(difflib.SequenceMatcher(None, want, _letters(text)).ratio() >= 0.82
                for text, _, _ in read['items'])
-
-
-def seen_anywhere(read, phrase):
-    """Like seen(), but also true when OCR split the phrase over separate items
-    ('BEST PLAY' | 'EARNED'). Used for "unless_seen", where a false yes is the safe side."""
-    return seen(read, phrase) or _letters(phrase) in _letters(read['text'])
 
 
 _ocr_engine = None
@@ -498,8 +491,7 @@ def classify(read, in_match=False):
     for screen in rules['screens']:
         if in_match and not screen['in_match']:
             continue
-        if screen['if_seen'] and all(seen(read, p) for p in screen['if_seen']) and \
-                not any(seen_anywhere(read, p) for p in screen['unless_seen']):
+        if screen['if_seen'] and all(seen(read, p) for p in screen['if_seen']):
             return screen, danger
     return None, danger
 
@@ -1283,24 +1275,6 @@ HUMAN_MODE = [human_player]
 
 
 # --------------------------------------------------------------------------- #
-# Optional extras
-# --------------------------------------------------------------------------- #
-def autojoin():
-    """Press F5 every 2 seconds. Keeps going in menus, since joining happens there."""
-    while wait_until_active(menu_ok=True):
-        tap(Key.f5, menu_ok=True)
-        print("Pressing F5")
-        wait(2)
-
-
-def anti_kick():
-    """Press 'l' every 20 seconds."""
-    while wait_until_active():
-        tap('l')
-        wait(20)
-
-
-# --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
 def run_task(task):
@@ -1356,7 +1330,7 @@ def is_started():
     return any(t.is_alive() for t in _threads)
 
 
-def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False):
+def start(game='', delay=5, dry_run=False):
     """Start a session in background threads and return right away.
     dry_run: only detect and report states and clicks; send no input at all."""
     global DRY_RUN, rules, game_hwnd
@@ -1376,14 +1350,7 @@ def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False
     match['start'] = None
     match['over_at'] = None
     tasks = [] if dry_run else list(HUMAN_MODE)
-    if autojoin_on and not dry_run:
-        tasks.append(autojoin)
-    if anti_kick_on and not dry_run:
-        tasks.append(anti_kick)
 
-    if not is_admin():
-        print("Warning: not running as administrator. If the game runs as admin, it will ignore\n"
-              "         this input and F8/F9 won't work while it's focused.")
     if game:
         focused.clear()  # wait for the game before sending anything
         _spawn(watch_focus, game)
@@ -1430,8 +1397,6 @@ def stop():
 def main():
     global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE, READ_INTERVAL
     parser = argparse.ArgumentParser(description="Anti-AFK input bot. Run app.py for the window version.")
-    parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
-    parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
     parser.add_argument('--delay', type=int, default=5,
                         help="seconds to wait before sending input (default 5)")
     parser.add_argument('--game', default='cod.exe',
@@ -1488,7 +1453,10 @@ def main():
     listener = Listener(on_press=on_hotkey)
     listener.start()
     try:
-        start(args.game, args.autojoin, args.anti_kick, args.delay, dry_run=args.test)
+        if not is_admin():
+            print("Warning: not running as administrator. If the game runs as admin, it will ignore\n"
+                  "         this input and F8/F9 won't work while it's focused.")
+        start(args.game, args.delay, dry_run=args.test)
         while not stop_event.wait(0.5):
             pass
     except KeyboardInterrupt:
