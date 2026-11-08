@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 
 import customtkinter as ctk
 
@@ -94,28 +95,33 @@ def chip(parent, text, color, text_color=TEXT):
 class FlowDiagram:
     """The bot's state machine drawn as a diagram; the current state lights up."""
 
-    W, H = 620, 330  # logical size; drawing scales to the canvas width
+    # Logical layout; the drawing scales to fit the canvas. Columns 90/270/450/630,
+    # rows: getting into a match, in the match, special screens.
+    W, H = 720, 380
     NODES = {  # key: (x, y, title, action)
-        'kicked': (90, 45, "Kicked", "click EXIT"),
-        'main_menu': (235, 45, "Main menu", "click QUICK PLAY"),
-        'searching': (380, 45, "Searching", "wait"),
-        'lobby': (530, 45, "Lobby", "wait"),
-        'play': (90, 145, "PLAYING", "move, look, shoot"),
-        'over': (380, 145, "Victory / defeat", "pause, ESC report"),
-        'class_select': (530, 145, "Class select", "press SPACE"),
-        'menu': (90, 245, "Unknown / store", "send nothing"),
-        'resume': (380, 245, "RESUMING", "wait 1.5s"),
+        'main_menu': (90, 50, "Main menu", "click QUICK PLAY"),
+        'searching': (270, 50, "Searching", "wait"),
+        'lobby': (450, 50, "Lobby", "wait"),
+        'class_select': (630, 50, "Class select", "press SPACE"),
+        'report': (270, 165, "Match report", "press ESC"),
+        'play': (450, 165, "PLAYING", "move, look, shoot"),
+        'resume': (630, 165, "Resuming", "wait 1.5s"),
+        'kicked': (90, 280, "Kicked", "click EXIT"),
+        'over': (270, 280, "Match over", "input paused"),
+        'pause_menu': (450, 280, "In-game menu", "press ESC"),
+        'menu': (630, 280, "Unknown / store", "send nothing"),
     }
-    EDGES = [('play', 'kicked'), ('kicked', 'main_menu'), ('main_menu', 'searching'),
-             ('searching', 'lobby'), ('lobby', 'class_select'), ('class_select', 'resume'),
-             ('resume', 'play'), ('play', 'over'), ('over', 'lobby'), ('play', 'menu'),
-             ('menu', 'resume')]
+    EDGES = [('main_menu', 'searching'), ('searching', 'lobby'), ('lobby', 'class_select'),
+             ('class_select', 'resume'), ('resume', 'play'), ('play', 'over'),
+             ('over', 'report'), ('report', 'searching'), ('play', 'kicked'),
+             ('kicked', 'main_menu'), ('play', 'pause_menu'), ('pause_menu', 'resume'),
+             ('menu', 'resume')]  # unknown menus can come from anywhere
     SIDE = [(bot.STARTING, "Starting"), (bot.PAUSED, "Paused (F8)"),
             (bot.NOT_FOCUSED, "Not focused"), (bot.STOPPED, "Stopped (F9)")]
     SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over',
-                   'report_victory': 'over', 'report_defeat': 'over', 'report': 'over',
-                   'best_play': 'over', 'post_match': 'over'}
-    NODE_W, NODE_H = 128, 50
+                   'best_play': 'over', 'post_match': 'over',
+                   'report_victory': 'report', 'report_defeat': 'report'}
+    NODE_W, NODE_H = 150, 56
 
     def __init__(self, parent):
         self.canvas = tk.Canvas(parent, bg=CARD, highlightthickness=0, height=200)
@@ -152,52 +158,57 @@ class FlowDiagram:
         k = min(width / self.W, height / self.H)  # fit both ways, centered
         ox, oy = (width - self.W * k) / 2, (height - self.H * k) / 2
         w, h = self.NODE_W * k / 2, self.NODE_H * k / 2
+        # Negative sizes are pixels, so the text scales with the boxes whatever the
+        # Windows display scaling is.
+        title_font = tkfont.Font(family=FONT, size=-max(9, round(15 * k)), weight='bold')
+        sub_font = tkfont.Font(family=FONT, size=-max(8, round(12 * k)))
+        dim = '#3a4150'
 
         def center(key):
             x, y = self.NODES[key][:2]
             return ox + x * k, oy + y * k
 
-        def border_point(key, toward):
+        def border_point(key, toward, gap=4):
             # Where the line from this node's center toward `toward` leaves the box.
             (x, y), (tx, ty) = center(key), toward
             dx, dy = tx - x, ty - y
             if dx == 0 and dy == 0:
                 return x, y
-            scale = min(w / abs(dx) if dx else float('inf'), h / abs(dy) if dy else float('inf'))
+            scale = min((w + gap) / abs(dx) if dx else float('inf'),
+                        (h + gap) / abs(dy) if dy else float('inf'))
             return x + dx * scale, y + dy * scale
 
         for a, b in self.EDGES:
             start, end = border_point(a, center(b)), border_point(b, center(a))
             lit = a == self.active
-            c.create_line(*start, *end, arrow='last', arrowshape=(9 * k, 11 * k, 4 * k),
-                          width=max(1.5, 2 * k), fill=self.color if lit else '#4b5563')
+            c.create_line(*start, *end, arrow='last', arrowshape=(8 * k, 10 * k, 4 * k),
+                          width=max(1.5, (2.5 if lit else 1.5) * k),
+                          fill=self.color if lit else dim)
 
-        title_font = (FONT, max(8, int(11 * k)), 'bold')
-        sub_font = (FONT, max(7, int(9 * k)))
         for key, (x, y, title, action) in self.NODES.items():
             x, y = ox + x * k, oy + y * k
             lit = key == self.active
-            self.rounded(c, x - w, y - h, x + w, y + h, 12 * k,
+            self.rounded(c, x - w, y - h, x + w, y + h, 10 * k,
                          fill=self.color if lit else BG, outline=self.color if lit else CARD_BORDER,
-                         width=2)
-            c.create_text(x, y - 8 * k, text=title, fill='white' if lit else TEXT, font=title_font)
-            c.create_text(x, y + 10 * k, text=action, fill='white' if lit else MUTED, font=sub_font)
+                         width=2 if lit else 1)
+            c.create_text(x, y - 9 * k, text=title, fill='white' if lit else TEXT, font=title_font)
+            c.create_text(x, y + 11 * k, text=action, fill='white' if lit else MUTED, font=sub_font)
 
         # States that can happen at any time.
-        y = oy + 305 * k
-        c.create_text(ox + 14 * k, y, text="Any time:", anchor='w', fill=MUTED, font=sub_font)
-        x = ox + 80 * k
+        y = oy + 352 * k
+        x = ox + (self.NODES['kicked'][0] - self.NODE_W / 2) * k
+        c.create_text(x, y, text="Any time", anchor='w', fill=MUTED, font=sub_font)
+        x += sub_font.measure("Any time") + 12 * k
         side = list(self.SIDE)
         if self.other:
             side.append(('__other__', f"Screen: {self.other}"))
         for key, label in side:
-            lit = key == self.active or (key == '__other__')
-            tw = (len(label) * 6.6 + 22) * k
-            self.rounded(c, x, y - 11 * k, x + tw, y + 11 * k, 10 * k,
+            lit = key == self.active or key == '__other__'
+            tw = sub_font.measure(label) + 22 * k
+            self.rounded(c, x, y - 13 * k, x + tw, y + 13 * k, 10 * k,
                          fill=self.color if lit else BG, outline=self.color if lit else CARD_BORDER, width=1)
             c.create_text(x + tw / 2, y, text=label, fill='white' if lit else MUTED, font=sub_font)
             x += tw + 8 * k
-
 
 class App:
     def __init__(self, root):
