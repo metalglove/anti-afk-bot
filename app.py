@@ -99,7 +99,7 @@ class FlowDiagram:
         'searching': (380, 45, "Searching", "wait"),
         'lobby': (530, 45, "Lobby", "wait"),
         'play': (90, 145, "PLAYING", "move, look, shoot"),
-        'over': (380, 145, "Victory / defeat", "pause input"),
+        'over': (380, 145, "Victory / defeat", "pause, ESC report"),
         'class_select': (530, 145, "Class select", "click SELECT"),
         'menu': (90, 245, "Unknown / store", "send nothing"),
         'resume': (380, 245, "RESUMING", "wait 1.5s"),
@@ -584,10 +584,8 @@ class App:
             when = "during a match, " if screen['in_match'] else ""
             ctk.CTkLabel(row, text=f"{when}when it sees: " + "  +  ".join(screen['if_seen']), text_color=MUTED,
                          anchor='w', font=ctk.CTkFont(FONT, 12)).grid(row=1, column=0, sticky='w', padx=14, pady=(0, 10))
-            if screen['click']:
-                c = chip(row, f"click {screen['click']}", '#1e3a5f')
-            elif screen['press']:
-                c = chip(row, f"press {screen['press'].upper()}", '#1e3a5f')
+            if bot.screen_action(screen):
+                c = chip(row, bot.screen_action(screen), '#1e3a5f')
             elif screen['in_match']:
                 c = chip(row, "pause input", '#3b2f0b')
             else:
@@ -668,7 +666,7 @@ class App:
             return 'playing'
         if line.startswith('['):
             return 'state'
-        if 'click' in line.lower() or 'pressed esc' in line.lower():
+        if 'click' in line.lower():
             return 'click'
         if any(w in line for w in ('Warning', "Can't", "Couldn't", 'Not running', 'crashed', 'Tip')):
             return 'warn'

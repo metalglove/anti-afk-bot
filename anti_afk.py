@@ -351,7 +351,6 @@ def menu_reason():
 # every READ_INTERVAL seconds in between. Nothing is read during a match. rules.json then says what each
 # screen is and what to click, by the words on it, e.g.
 #   {"name": "kicked", "if_seen": ["KICKED FOR INACTIVITY"], "click": "EXIT"}
-# or press a key instead: "press": "ESC" (e.g. to dismiss the after action report).
 # Nothing is clicked while any "never_click_if_seen" word (STORE, PURCHASE...)
 # is on screen. Rules with "in_match": true are also checked during a match
 # (every MATCH_READ_INTERVAL s, no cursor needed) and pause input while they match,
@@ -386,7 +385,9 @@ def load_rules():
         data.setdefault('never_click_if_seen', [])
         for screen in data['screens']:
             screen.setdefault('click', None)
-            screen.setdefault('press', None)  # a key to press instead of clicking, e.g. "ESC"
+            screen.setdefault('press', None)  # a key to press instead, e.g. "ESC"
+            if screen['press']:
+                screen['press'] = str(screen['press']).lower()
             screen['in_match'] = bool(screen.get('in_match', False))
             if screen['in_match']:
                 screen['click'] = screen['press'] = None  # in-match rules only pause input
@@ -470,6 +471,15 @@ def find_text(read, phrase):
     return best[1] if best else None
 
 
+def screen_action(screen):
+    """What the bot does on a screen: "click X", "press ESC", or None (wait)."""
+    if screen['click']:
+        return f"click {screen['click']}"
+    if screen['press']:
+        return f"press {screen['press'].upper()}"
+    return None
+
+
 def classify(read, in_match=False):
     """Which rule matches a read: (screen rule or None, danger word or None).
     in_match: only consider rules marked "in_match" (no cursor is showing)."""
@@ -538,17 +548,9 @@ class ScreenReader:
 reader = ScreenReader()
 
 
-def screen_action(screen):
-    """What the bot does on a screen: "click X", "press ESC", or None (just waits)."""
-    if screen['click']:
-        return f"click {screen['click']}"
-    if screen['press']:
-        return f"press {screen['press'].upper()}"
-    return None
-
-
 def click_screen(screen, seen_at):
-    """Click a screen's button (or press its key) after a short pause, if the screen is still there."""
+    """Click a screen's button (or press its key) after a short pause, if the screen
+    is still there."""
     if not wait(random.uniform(*SCREEN_CLICK_DELAY)):
         return
     if not (running.is_set() and focused.is_set()):
@@ -566,14 +568,13 @@ def click_screen(screen, seen_at):
     if current is not screen or danger or not menu_reason():
         return  # the screen changed while we waited
     if screen['press']:
-        key = screen['press'].lower()
-        if DRY_RUN:
-            stats['clicks'] += 1
-            print(f"Test: would press {key.upper()} on screen '{screen['name']}'.")
-            return
-        inputs.tap_key(key)
+        key = screen['press'].upper()
         stats['clicks'] += 1
-        print(f"Pressed {key.upper()} on screen '{screen['name']}'.")
+        if DRY_RUN:
+            print(f"Test: would press {key} on screen '{screen['name']}'.")
+            return
+        inputs.press_key(screen['press'])
+        print(f"Pressed {key} on screen '{screen['name']}'.")
         if wait(READ_AFTER_CLICK):
             reader.read_soon()
         return
@@ -708,8 +709,8 @@ def detect(read=None):
     if danger:
         return MENU, f"'{danger}' on screen: never clicking here", None
     if screen:
-        action = screen_action(screen)
-        action = action.replace('click ', 'clicking ').replace('press ', 'pressing ') if action else 'waiting'
+        action = screen_action(screen) or 'waiting'
+        action = action.replace('click ', 'clicking ', 1).replace('press ', 'pressing ', 1)
         return SCREEN, f"{screen['name']} ({action})", screen
     return MENU, "unknown, nothing sent", None
 
@@ -822,10 +823,7 @@ def print_screen_text(delay=3):
     if danger:
         print(f"=> '{danger}' is on screen: the bot never clicks here.")
     elif screen:
-        if screen['click']:
-            target = f", clicks '{screen['click']}' at {find_text(read, screen['click'])}"
-        else:
-            target = f", presses {screen['press'].upper()}" if screen['press'] else ''
+        target = f", clicks '{screen['click']}' at {find_text(read, screen['click'])}" if screen['click']             else f", presses {screen['press'].upper()}" if screen['press'] else ''
         print(f"=> screen '{screen['name']}'{target}")
     else:
         print("=> no rule matches this screen (the bot sends nothing here).")
@@ -951,13 +949,14 @@ class InputState:
             time.sleep(random.uniform(0.05, 0.1))
             pydirectinput.mouseUp(button='left')
 
-    def tap_key(self, key):
-        """Press and release one key on a known screen (skips the menu check, like click_at)."""
+    def press_key(self, key):
+        """Tap a key on a known screen (e.g. ESC to dismiss a report). Like click_at,
+        it skips the menu check but needs the bot running and the game in front."""
         with self._lock:
             if not (running.is_set() and focused.is_set()) or stop_event.is_set():
                 return
             pydirectinput.keyDown(key)
-            time.sleep(random.uniform(0.06, 0.15))
+            time.sleep(random.uniform(0.05, 0.12))
             pydirectinput.keyUp(key)
 
     def release_all(self):
