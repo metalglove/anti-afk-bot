@@ -1,3 +1,4 @@
 pynput
 pydirectinput
 Pillow
+customtkinter
