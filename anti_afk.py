@@ -66,7 +66,7 @@ running.set()
 focused = threading.Event()  # set = game window is in front (always set if no game given)
 focused.set()
 game_hwnd = None  # the game's window handle while it is focused (only with --game)
-no_menu = threading.Event()  # set = no menu detected (always set with --no-menu-check)
+no_menu = threading.Event()  # set = the state machine says PLAYING (normal input allowed)
 no_menu.set()
 
 # Menu detection (see "Menu detection" below).
@@ -154,12 +154,10 @@ def watch_focus(game):
             game_hwnd = _user32().GetForegroundWindow()
             if not focused.is_set():
                 focused.set()
-                print("Game focused, resuming.")
         elif focused.is_set():
             focused.clear()
             game_hwnd = None
             inputs.release_all()
-            print(f"{game} not focused, waiting...")
         stop_event.wait(0.25)
 
 
@@ -524,39 +522,135 @@ def click_screen(screen):
     print(f"Clicked {x},{y} on screen '{screen['name']}'.")
 
 
-def watch_menu():
-    """Pause input while a menu is open; resume once it has been gone a moment.
-    On a learned screen with a click spot, click it (e.g. to pick a class)."""
-    clear_since = None
-    last_clicked = {}  # screen name -> time
-    next_screen_check = 0.0
+# --------------------------------------------------------------------------- #
+# State machine
+# --------------------------------------------------------------------------- #
+# One thread decides which state the bot is in, ten times a second, and only the
+# PLAYING state lets normal input out. Every change is printed with the time and
+# how long the previous state lasted, and the terminal title shows the state.
+#
+#   STARTING      countdown before the bot begins
+#   PAUSED        you pressed F8
+#   NOT FOCUSED   the game isn't the window in front (only with --game)
+#   PLAYING       in a match: all actions run
+#   RESUMING      a menu just closed; waits MENU_RESUME_AFTER before PLAYING
+#   SCREEN name   a learned screen (e.g. class_select): clicks its spot, if it has one
+#   MENU          a menu it doesn't know (store, settings...): nothing is sent
+STARTING, PAUSED, NOT_FOCUSED, PLAYING, RESUMING, SCREEN, MENU = (
+    'STARTING', 'PAUSED', 'NOT FOCUSED', 'PLAYING', 'RESUMING', 'SCREEN', 'MENU')
+UNKNOWN_MENU_REMINDER = 300  # seconds in an unknown menu before suggesting --learn
+
+state_lock = threading.Lock()
+state = {'name': STARTING, 'detail': '', 'since': time.monotonic()}
+started = threading.Event()  # set once the countdown is over
+
+
+def detect(last_screen=None):
+    """Raw state from what's on screen now: (state, detail, learned screen or None).
+    No delays applied; StateMachine adds those."""
+    if not started.is_set():
+        return STARTING, '', None
+    if not running.is_set():
+        return PAUSED, 'F8 to resume', None
+    if not focused.is_set():
+        return NOT_FOCUSED, 'waiting for the game window', None
+    reason = menu_reason()
+    if not reason:
+        return PLAYING, '', None
+    screen = last_screen if last_screen is not None else (matching_screen()[0] if screens else None)
+    if screen:
+        action = 'clicking' if screen['click'] else 'waiting'
+        return SCREEN, f"{screen['name']} ({action})", screen
+    return MENU, f"unknown, {reason}, nothing sent", None
+
+
+def set_console_title(text):
+    try:
+        from ctypes import WinDLL
+        WinDLL('kernel32').SetConsoleTitleW(text)
+    except (ImportError, AttributeError, OSError):
+        pass
+
+
+def format_duration(seconds):
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds // 3600}h{seconds % 3600 // 60:02d}m"
+
+
+def current_state():
+    with state_lock:
+        return state['name'], state['detail'], time.monotonic() - state['since']
+
+
+def enter_state(name, detail=''):
+    """Switch state, gate input, and print the change."""
+    with state_lock:
+        if state['name'] == name and state['detail'] == detail:
+            return
+        previous, lasted = state['name'], time.monotonic() - state['since']
+        same_name = previous == name
+        state.update(name=name, detail=detail)
+        if not same_name:
+            state['since'] = time.monotonic()
+    if name == PLAYING:
+        no_menu.set()
+    elif no_menu.is_set():
+        no_menu.clear()
+        inputs.release_all()
+    label = f"{name}: {detail}" if detail else name
+    was = '' if same_name else f"   (after {format_duration(lasted)} {previous})"
+    print(f"[{time.strftime('%H:%M:%S')}] {label}{was}")
+    set_console_title(f"anti-afk: {label}")
+
+
+def run_state_machine():
+    """Track the state and act on it: release input outside PLAYING, wait a moment
+    before resuming after a menu, and click learned screens."""
+    resume_since = None
+    last_clicked = {}            # screen name -> time
+    screen, next_screen_check = None, 0.0
+    last_reminder = time.monotonic()
     while not stop_event.is_set():
-        reason = menu_reason() if focused.is_set() else ''
-        if reason:
-            clear_since = None
-            if no_menu.is_set():
-                no_menu.clear()
-                inputs.release_all()
-                print(f"Menu detected ({reason}), pausing input.")
-            now = time.monotonic()
-            if screens and now >= next_screen_check:
-                next_screen_check = now + 0.5
-                screen, _ = matching_screen()
-                if (screen and screen['click'] and
-                        now - last_clicked.get(screen['name'], 0) >= SCREEN_CLICK_COOLDOWN):
-                    click_screen(screen)
-                    last_clicked[screen['name']] = time.monotonic()
-        elif not no_menu.is_set() and focused.is_set():
-            clear_since = clear_since or time.monotonic()
-            if time.monotonic() - clear_since >= MENU_RESUME_AFTER:
-                no_menu.set()
-                print("Menu closed, resuming.")
+        now = time.monotonic()
+        if not (screens and focused.is_set() and menu_reason()):
+            screen, next_screen_check = None, 0.0     # check right away when a menu opens
+        elif now >= next_screen_check:  # screenshots are slower; refresh 3x a second
+            next_screen_check = now + 0.3
+            screen = matching_screen()[0]
+        name, detail, screen_now = detect(screen or False)
+        current, _, lasted = current_state()
+
+        if name == PLAYING and current not in (PLAYING, STARTING) and MENU_RESUME_AFTER > 0:
+            # Back from a menu: give it a moment in case the menu flickers back.
+            resume_since = resume_since or now
+            if now - resume_since < MENU_RESUME_AFTER:
+                name, detail = RESUMING, f"playing in {MENU_RESUME_AFTER:g}s"
+            else:
+                resume_since = None
+        else:
+            resume_since = None
+        enter_state(name, detail)
+
+        if name == SCREEN and screen_now['click'] and \
+                now - last_clicked.get(screen_now['name'], 0) >= SCREEN_CLICK_COOLDOWN:
+            click_screen(screen_now)
+            last_clicked[screen_now['name']] = time.monotonic()
+        elif name == MENU and lasted > UNKNOWN_MENU_REMINDER and \
+                now - last_reminder > UNKNOWN_MENU_REMINDER:
+            last_reminder = now
+            print(f"   Still in an unknown menu after {format_duration(lasted)}. If this screen "
+                  "needs a click, teach it with --learn.")
         stop_event.wait(0.1)
 
 
 def show_menu():
     """Print what menu detection sees whenever it changes (Ctrl+C to quit)."""
     print("Open and close menus in the game; what the bot sees is printed below. Ctrl+C to quit.")
+    started.set()
     last = None
     try:
         while True:
@@ -566,12 +660,13 @@ def show_menu():
                 rgb = screen_pixel(x, y)
                 color = '%02X%02X%02X' % rgb if rgb else 'unreadable'
                 parts.append(f"pixel {x},{y}: {color}")
-            reason = menu_reason()
+            screen = None
             if screens:
                 screen, diff = matching_screen()
                 parts.append(f"screen: {screen['name'] if screen else 'unknown'} "
                              f"(diff {diff:.0f}, match <= {MATCH_THRESHOLD})")
-            parts.append(f"=> {'MENU (' + reason + ')' if reason else 'playing'}")
+            name, detail, _ = detect(screen or False)
+            parts.append(f"=> {name}" + (f": {detail}" if detail else ''))
             line = '   '.join(parts)
             if line != last:
                 print(line)
@@ -1260,11 +1355,10 @@ def main():
     else:
         print("Tip: pass --game <exe or window title> so input pauses when the game isn't in front.")
 
-    if MENU_CHECK or INGAME_PIXEL:
-        no_menu.clear()  # nothing goes out until the first check says we're playing
-        threading.Thread(target=watch_menu, daemon=True).start()
-    else:
+    if not (MENU_CHECK or INGAME_PIXEL):
         print("Warning: menu check is off; the bot may click things in menus and the store.")
+    no_menu.clear()  # nothing goes out until the state machine says PLAYING
+    threading.Thread(target=run_state_machine, daemon=True).start()
 
     listener = Listener(on_press=on_hotkey)
     listener.start()
@@ -1276,6 +1370,7 @@ def main():
                 break
 
         if not stop_event.is_set():
+            started.set()
             for task in tasks:
                 threading.Thread(target=run_task, args=(task,), daemon=True).start()
             print(f"Running {args.mode} mode. F8 = pause/resume, F9 = stop.")

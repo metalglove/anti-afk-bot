@@ -23,6 +23,29 @@ Then switch to the game. It only plays while the game window is in front.
 
 If nothing happens in-game, run it from an administrator terminal.
 
+## What the bot is doing
+
+The terminal prints every state change with the time, and the terminal's title shows the
+current state:
+
+```
+[21:04:12] SCREEN: main_menu (clicking)   (after 3m10s MENU)
+[21:04:40] MENU: unknown, mouse cursor is showing, nothing sent   (after 28s SCREEN)
+[21:05:31] SCREEN: class_select (clicking)   (after 51s MENU)
+[21:05:34] RESUMING: playing in 1.5s   (after 3s SCREEN)
+[21:05:35] PLAYING   (after 1s RESUMING)
+```
+
+| State | Meaning |
+| --- | --- |
+| STARTING | Countdown before it begins |
+| PAUSED | You pressed F8 |
+| NOT FOCUSED | The game isn't the window in front |
+| PLAYING | In a match: the only state where it moves, shoots and presses keys |
+| RESUMING | A menu just closed; it waits a moment before playing |
+| SCREEN | A screen you taught it (see below); it clicks the spot you picked |
+| MENU | A menu it doesn't know, like the store: it sends nothing |
+
 ## Menus and the store
 
 Input pauses whenever the mouse cursor is showing, which is how the game looks in menus,
