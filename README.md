@@ -10,18 +10,26 @@ pip install -r requirements.txt
 
 ## Run
 
-```
-python anti_afk.py --game cod.exe
-```
+Double-click **AntiAFK.bat**. It asks for administrator rights (the game ignores input
+from programs that don't have them) and opens the app.
 
-Then switch to the game. It only plays while the game window is in front.
+1. Click **Detect** and then click on the game, or type its exe name (e.g. `cod.exe`).
+2. Click **Start** and switch to the game.
+
+The big bar at the top shows what the bot is doing right now. **Test (send nothing)** runs
+everything except the input, so you can walk through the menus and check that each screen
+is recognized before letting it play. Settings are remembered between runs.
 
 | Key | Action |
 | --- | --- |
 | F8 | Pause / resume |
 | F9 | Stop |
 
-If nothing happens in-game, run it from an administrator terminal.
+Using automation in online games may break the game's terms of service and can get your
+account banned.
+
+Prefer the terminal? `python anti_afk.py --game cod.exe` does the same (`--help` for options,
+`--test` for test mode). Run it from an administrator terminal.
 
 ## What the bot is doing
 
@@ -55,8 +63,8 @@ to check that it says `MENU` there and `playing` in a match.
 
 ### Class selection and other screens you want clicked
 
-The bot can recognize screens you teach it. On the class selection screen, run
-`python anti_afk.py --learn class_select` and follow the prompts. Press F7 on the top-left and
+The bot can recognize screens you teach it. On the class selection screen, click **Learn screen...** in the
+app (or run `python anti_afk.py --learn class_select`) and follow the prompts in the log. Press F7 on the top-left and
 then the bottom-right corner of something that is only on that screen and doesn't change,
 like its title. Then press F7 on what it should click, such as your class. From then on it
 clicks that spot whenever it sees that screen. Every other menu, including the store, stays

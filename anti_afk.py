@@ -518,6 +518,9 @@ def click_screen(screen):
     if current is not screen:
         return  # the screen changed while we waited
     x, y = to_screen(*screen['click'])
+    if DRY_RUN:
+        print(f"Test: would click {x},{y} on screen '{screen['name']}'.")
+        return
     inputs.click_at(x, y)
     print(f"Clicked {x},{y} on screen '{screen['name']}'.")
 
@@ -536,12 +539,13 @@ def click_screen(screen):
 #   RESUMING      a menu just closed; waits MENU_RESUME_AFTER before PLAYING
 #   SCREEN name   a learned screen (e.g. class_select): clicks its spot, if it has one
 #   MENU          a menu it doesn't know (store, settings...): nothing is sent
-STARTING, PAUSED, NOT_FOCUSED, PLAYING, RESUMING, SCREEN, MENU = (
-    'STARTING', 'PAUSED', 'NOT FOCUSED', 'PLAYING', 'RESUMING', 'SCREEN', 'MENU')
+STARTING, PAUSED, NOT_FOCUSED, PLAYING, RESUMING, SCREEN, MENU, STOPPED = (
+    'STARTING', 'PAUSED', 'NOT FOCUSED', 'PLAYING', 'RESUMING', 'SCREEN', 'MENU', 'STOPPED')
+DRY_RUN = False  # test mode: detect states and report clicks, but send nothing
 UNKNOWN_MENU_REMINDER = 300  # seconds in an unknown menu before suggesting --learn
 
 state_lock = threading.Lock()
-state = {'name': STARTING, 'detail': '', 'since': time.monotonic()}
+state = {'name': STOPPED, 'detail': '', 'since': time.monotonic()}
 started = threading.Event()  # set once the countdown is over
 
 
@@ -550,6 +554,8 @@ def detect(last_screen=None):
     No delays applied; StateMachine adds those."""
     if not started.is_set():
         return STARTING, '', None
+    if stop_event.is_set():
+        return STOPPED, '', None
     if not running.is_set():
         return PAUSED, 'F8 to resume', None
     if not focused.is_set():
@@ -633,7 +639,8 @@ def run_state_machine():
                 resume_since = None
         else:
             resume_since = None
-        enter_state(name, detail)
+        if name != STARTING:  # the countdown reports STARTING itself
+            enter_state(name, detail)
 
         if name == SCREEN and screen_now['click'] and \
                 now - last_clicked.get(screen_now['name'], 0) >= SCREEN_CLICK_COOLDOWN:
@@ -1259,24 +1266,117 @@ def run_task(task):
         stop_event.set()
 
 
+def toggle_pause():
+    if running.is_set():
+        running.clear()
+        inputs.release_all()
+    else:
+        running.set()
+
+
 def on_hotkey(key):
     if key == STOP_KEY:
-        print("Stopping...")
         stop_event.set()
-        return False  # stops the listener
-    if key == PAUSE_KEY:
-        if running.is_set():
-            running.clear()
-            inputs.release_all()
-            print("Paused (F8 to resume).")
+    elif key == PAUSE_KEY and started.is_set():
+        toggle_pause()
+
+
+# --------------------------------------------------------------------------- #
+# Starting and stopping (used by the command line and by app.py)
+# --------------------------------------------------------------------------- #
+MODES = {'fast': FAST_MODE, 'slow': SLOW_MODE, 'human': HUMAN_MODE}
+_threads = []
+
+
+def _spawn(target, *args):
+    t = threading.Thread(target=target, args=args, daemon=True)
+    t.start()
+    _threads.append(t)
+
+
+def describe_screens():
+    for screen in screens:
+        if screen['click']:
+            cx, cy = screen['click']
+            action = f"click at {cx:.0%} across, {cy:.0%} down the game window"
         else:
-            running.set()
-            print("Resumed.")
+            action = "wait"
+        print(f"Known screen '{screen['name']}': {action}.")
+
+
+def is_started():
+    """True while a session's threads are still running."""
+    return any(t.is_alive() for t in _threads)
+
+
+def start(mode='human', game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False):
+    """Start a session in background threads and return right away.
+    dry_run: only detect and report states and clicks; send no input at all."""
+    global DRY_RUN, screens, game_hwnd
+    stop()
+    stop_event.clear()
+    running.set()
+    started.clear()
+    no_menu.clear()  # nothing goes out until the state machine says PLAYING
+    focused.set()
+    game_hwnd = None
+    DRY_RUN = dry_run
+
+    screens = load_screens()
+    describe_screens()
+    tasks = [] if dry_run else list(MODES[mode])
+    if autojoin_on and not dry_run:
+        tasks.append(autojoin)
+    if anti_kick_on and not dry_run:
+        tasks.append(anti_kick)
+
+    if not is_admin():
+        print("Warning: not running as administrator. If the game runs as admin, it will ignore\n"
+              "         this input and F8/F9 won't work while it's focused.")
+    if game:
+        focused.clear()  # wait for the game before sending anything
+        _spawn(watch_focus, game)
+    else:
+        print("Tip: set the game so input pauses when the game isn't in front.")
+    if not (MENU_CHECK or INGAME_PIXEL):
+        print("Warning: menu check is off; the bot may click things in menus and the store.")
+    if dry_run:
+        print("Test mode: nothing is sent. Go through the menus and watch the state.")
+
+    enter_state(STARTING)
+    _spawn(run_state_machine)
+    _spawn(_countdown, delay, tasks, mode)
+
+
+def _countdown(delay, tasks, mode):
+    for remaining in range(delay, 0, -1):
+        enter_state(STARTING, f"{remaining}s, switch to the game")
+        if not wait(1):
+            return
+    started.set()
+    for task in tasks:
+        _spawn(run_task, task)
+    if tasks:
+        print(f"Running {mode} mode. F8 = pause/resume, F9 = stop.")
+
+
+def stop():
+    """Stop the session, wait for its threads and release everything."""
+    stop_event.set()
+    deadline = time.monotonic() + 3
+    for t in list(_threads):
+        if t is not threading.current_thread():
+            t.join(max(0.0, deadline - time.monotonic()))
+    _threads.clear()
+    inputs.release_all()
+    if current_state()[0] != STOPPED:
+        enter_state(STOPPED)
+        print("Stopped; all keys released.")
 
 
 def main():
     global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE, MATCH_THRESHOLD, screens
-    parser = argparse.ArgumentParser(description="Anti-AFK input bot.")
+    parser = argparse.ArgumentParser(description="Anti-AFK input bot. Run app.py for the window version.")
     parser.add_argument('--mode', choices=['human', 'fast', 'slow'], default='human')
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
     parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
@@ -1301,6 +1401,8 @@ def main():
                              f"(default {PIXEL_TOLERANCE})")
     parser.add_argument('--show-menu', action='store_true',
                         help="just print what menu detection sees (cursor, pixel, known screen)")
+    parser.add_argument('--test', action='store_true',
+                        help="run the state machine without sending any input")
     parser.add_argument('--learn', metavar='NAME',
                         help="save the current game screen as a known screen (e.g. class_select), "
                              "optionally with a spot to click there")
@@ -1319,70 +1421,29 @@ def main():
             parser.error(f"--ingame-pixel: {e}")
         INGAME_PIXEL = (x, y, color)  # color is None only with --show-menu: just print it
 
-    modes = {'fast': FAST_MODE, 'slow': SLOW_MODE, 'human': HUMAN_MODE}
-    tasks = list(modes[args.mode])
-    if args.autojoin:
-        tasks.append(autojoin)
-    if args.anti_kick:
-        tasks.append(anti_kick)
-
     if args.show_focus:
         show_focus()
         return
     if args.learn:
         learn_screen(args.learn)
         return
-    screens = load_screens()
-    for screen in screens:
-        if screen['click']:
-            cx, cy = screen['click']
-            action = f"click at {cx:.0%} across, {cy:.0%} down the game window"
-        else:
-            action = "stay paused"
-        print(f"Known screen '{screen['name']}': {action}.")
     if args.show_menu:
+        screens = load_screens()
+        describe_screens()
         show_menu()
         return
 
-    if not is_admin():
-        print("Warning: not running as administrator. If the game runs as admin, it will ignore\n"
-              "         this input and F8/F9 won't work while it's focused. If nothing happens\n"
-              "         in-game, rerun from an administrator terminal.")
-
-    if args.game:
-        focused.clear()  # wait for the game before sending anything
-        threading.Thread(target=watch_focus, args=(args.game,), daemon=True).start()
-    else:
-        print("Tip: pass --game <exe or window title> so input pauses when the game isn't in front.")
-
-    if not (MENU_CHECK or INGAME_PIXEL):
-        print("Warning: menu check is off; the bot may click things in menus and the store.")
-    no_menu.clear()  # nothing goes out until the state machine says PLAYING
-    threading.Thread(target=run_state_machine, daemon=True).start()
-
     listener = Listener(on_press=on_hotkey)
     listener.start()
-
     try:
-        for remaining in range(args.delay, 0, -1):
-            print(f"Starting in {remaining}s - switch to the game (F9 cancels)")
-            if not wait(1):
-                break
-
-        if not stop_event.is_set():
-            started.set()
-            for task in tasks:
-                threading.Thread(target=run_task, args=(task,), daemon=True).start()
-            print(f"Running {args.mode} mode. F8 = pause/resume, F9 = stop.")
-
+        start(args.mode, args.game, args.autojoin, args.anti_kick, args.delay, dry_run=args.test)
         while not stop_event.wait(0.5):
             pass
     except KeyboardInterrupt:
-        stop_event.set()
+        pass
     finally:
         listener.stop()
-        inputs.release_all()
-        print("Stopped; all keys released.")
+        stop()
 
 
 if __name__ == '__main__':
