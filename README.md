@@ -122,6 +122,7 @@ it reads nothing. `rules.json` says which screen has which words and what to cli
 {"name": "searching",    "if_seen": ["SEARCHING FOR A MATCH"]},
 {"name": "main_menu",    "if_seen": ["QUICK PLAY", "FEATURED"], "click": "QUICK PLAY"},
 {"name": "report",       "if_seen": ["AFTER ACTION REPORT"],    "press": "ESC"},
+{"name": "pause_menu",   "if_seen": ["RETURN TO GAME", "LEAVE MATCH"], "press": "ESC"},
 {"name": "class_select", "if_seen": ["SELECT CLASS"],           "press": "SPACE"}
 ```
 
@@ -134,6 +135,13 @@ positions, it works at any resolution or window size.
 Rules with `"in_match": true` are also checked during a match, every 5 seconds, even
 without a cursor. The VICTORY and DEFEAT banners are set up this way, so the bot stops
 moving and shooting as soon as a match ends. These rules only pause input; they never click.
+The BEST PLAY replay after the banner is one too (`best_play`). It uses `unless_seen`, so the
+"BEST PLAY EARNED" / "BEST PLAY LOST" notices during a match don't count: a rule never
+matches while any of its `unless_seen` words is on screen.
+
+After VICTORY / DEFEAT the bot stays in `post_match` with input paused until a pre-match
+screen (searching, lobby, class select, main menu) shows up, so the screens after the banner
+aren't mistaken for a new match. If none shows up within 5 minutes it plays again anyway.
 
 Rules are checked from top to bottom and the first match wins. The After Action Report
 also shows "SEARCHING FOR A MATCH" in its corner, so its rules (`report_victory`,
@@ -141,6 +149,10 @@ also shows "SEARCHING FOR A MATCH" in its corner, so its rules (`report_victory`
 `main_menu` so the bot never clicks QUICK PLAY while a search is running. The report
 records the match as a victory or defeat (in case the bot missed the banner), then the
 bot presses ESC to dismiss it.
+
+The in-game menu (ESC during a match) is `pause_menu`: the bot presses ESC to go back into
+the match. It never clicks there, so LEAVE MATCH and QUIT TO DESKTOP are never touched.
+While you're tabbed out the game isn't in front, so the bot sends nothing at all.
 
 Instead of `click`, a rule can have `"press": "ESC"` (or another key) to press that key
 on the screen. It has the same safety checks as a click.
