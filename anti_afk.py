@@ -597,7 +597,7 @@ stats = {'started': None, 'clicks': 0, 'matches': 0, 'kicks': 0, 'playing': 0.0,
 # appended to matches.csv (not in test runs), so the total time adds up across runs.
 HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'matches.csv')
 MATCH_END_SCREENS = {'victory': 'victory', 'defeat': 'defeat', 'kicked': 'kicked',
-                     'main_menu': 'left', 'searching': 'left'}
+                     'after_action': 'over', 'main_menu': 'left', 'searching': 'left'}
 match = {'start': None}  # wall-clock start of the current match
 
 
@@ -626,6 +626,10 @@ def _track_match(name, detail):
     if name != SCREEN or match['start'] is None:
         return
     result = MATCH_END_SCREENS.get(detail.split(' (')[0])
+    if result == 'over':  # after action report: it also shows VICTORY / DEFEAT
+        read = reader.latest
+        result = next((w.lower() for w in ('VICTORY', 'DEFEAT')
+                       if read is not None and seen(read, w)), 'over')
     if result is not None:
         end_match(result)
 

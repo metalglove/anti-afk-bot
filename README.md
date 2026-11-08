@@ -133,6 +133,10 @@ Rules with `"in_match": true` are also checked during a match, every 5 seconds, 
 without a cursor. The VICTORY and DEFEAT banners are set up this way, so the bot stops
 moving and shooting as soon as a match ends. These rules only pause input; they never click.
 
+After the banner the game shows the AFTER ACTION REPORT while it already searches for the
+next match. The bot waits there without clicking or pressing ESC, and if it missed the
+banner it still records the match as a victory or defeat from the report.
+
 To add a screen, open it in the game and click **Read screen** in the app (or run
 `python anti_afk.py --read-screen`). After 3 seconds it prints the text it sees and which
 rule matches. Pick a few words that are only on that screen, add a rule with **Edit**, and
