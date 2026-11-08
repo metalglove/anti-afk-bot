@@ -78,6 +78,112 @@ def heading(parent, text):
                         font=ctk.CTkFont(FONT, 11, 'bold'))
 
 
+class FlowDiagram:
+    """The bot's state machine drawn as a diagram; the current state lights up."""
+
+    W, H = 620, 330  # logical size; drawing scales to the canvas width
+    NODES = {  # key: (x, y, title, action)
+        'kicked': (90, 45, "Kicked", "click EXIT"),
+        'main_menu': (235, 45, "Main menu", "click QUICK PLAY"),
+        'searching': (380, 45, "Searching", "wait"),
+        'lobby': (530, 45, "Lobby", "wait"),
+        'play': (90, 145, "PLAYING", "move, look, shoot"),
+        'over': (380, 145, "Victory / defeat", "pause input"),
+        'class_select': (530, 145, "Class select", "click SELECT"),
+        'menu': (90, 245, "Unknown / store", "send nothing"),
+        'resume': (380, 245, "RESUMING", "wait 1.5s"),
+    }
+    EDGES = [('play', 'kicked'), ('kicked', 'main_menu'), ('main_menu', 'searching'),
+             ('searching', 'lobby'), ('lobby', 'class_select'), ('class_select', 'resume'),
+             ('resume', 'play'), ('play', 'over'), ('over', 'lobby'), ('play', 'menu'),
+             ('menu', 'resume')]
+    SIDE = [(bot.STARTING, "Starting"), (bot.PAUSED, "Paused (F8)"),
+            (bot.NOT_FOCUSED, "Not focused"), (bot.STOPPED, "Stopped (F9)")]
+    SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over'}
+    NODE_W, NODE_H = 128, 50
+
+    def __init__(self, parent):
+        self.canvas = tk.Canvas(parent, bg=CARD, highlightthickness=0, height=self.H)
+        self.canvas.bind('<Configure>', lambda e: self.draw())
+        self.active, self.color, self.other = None, ACCENT, ''
+
+    def show(self, state_name, detail, color):
+        if state_name == bot.PLAYING:
+            active = 'play'
+        elif state_name == bot.RESUMING:
+            active = 'resume'
+        elif state_name == bot.MENU:
+            active = 'menu'
+        elif state_name == bot.SCREEN:
+            screen = detail.split(' (')[0]
+            active = self.SCREEN_NODE.get(screen, screen)
+        else:
+            active = state_name
+        other = detail.split(' (')[0] if state_name == bot.SCREEN and active not in self.NODES else ''
+        if (active, color, other) != (self.active, self.color, self.other):
+            self.active, self.color, self.other = active, color, other
+            self.draw()
+
+    @staticmethod
+    def rounded(c, x1, y1, x2, y2, r, **kw):
+        pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
+               x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+        return c.create_polygon(pts, smooth=True, **kw)
+
+    def draw(self):
+        c = self.canvas
+        c.delete('all')
+        width = max(c.winfo_width(), 200)
+        k = width / self.W
+        c.configure(height=int(self.H * k))
+        w, h = self.NODE_W * k / 2, self.NODE_H * k / 2
+
+        def center(key):
+            x, y = self.NODES[key][:2]
+            return x * k, y * k
+
+        def border_point(key, toward):
+            # Where the line from this node's center toward `toward` leaves the box.
+            (x, y), (tx, ty) = center(key), toward
+            dx, dy = tx - x, ty - y
+            if dx == 0 and dy == 0:
+                return x, y
+            scale = min(w / abs(dx) if dx else float('inf'), h / abs(dy) if dy else float('inf'))
+            return x + dx * scale, y + dy * scale
+
+        for a, b in self.EDGES:
+            start, end = border_point(a, center(b)), border_point(b, center(a))
+            lit = a == self.active
+            c.create_line(*start, *end, arrow='last', arrowshape=(9 * k, 11 * k, 4 * k),
+                          width=max(1.5, 2 * k), fill=self.color if lit else '#4b5563')
+
+        title_font = (FONT, max(8, int(11 * k)), 'bold')
+        sub_font = (FONT, max(7, int(9 * k)))
+        for key, (x, y, title, action) in self.NODES.items():
+            x, y = x * k, y * k
+            lit = key == self.active
+            self.rounded(c, x - w, y - h, x + w, y + h, 12 * k,
+                         fill=self.color if lit else BG, outline=self.color if lit else CARD_BORDER,
+                         width=2)
+            c.create_text(x, y - 8 * k, text=title, fill='#0b0d10' if lit else TEXT, font=title_font)
+            c.create_text(x, y + 10 * k, text=action, fill='#0b0d10' if lit else MUTED, font=sub_font)
+
+        # States that can happen at any time.
+        y = 305 * k
+        c.create_text(14 * k, y, text="Any time:", anchor='w', fill=MUTED, font=sub_font)
+        x = 80 * k
+        side = list(self.SIDE)
+        if self.other:
+            side.append(('__other__', f"Screen: {self.other}"))
+        for key, label in side:
+            lit = key == self.active or (key == '__other__')
+            tw = (len(label) * 6.6 + 22) * k
+            self.rounded(c, x, y - 11 * k, x + tw, y + 11 * k, 10 * k,
+                         fill=self.color if lit else BG, outline=self.color if lit else CARD_BORDER, width=1)
+            c.create_text(x + tw / 2, y, text=label, fill='#0b0d10' if lit else MUTED, font=sub_font)
+            x += tw + 8 * k
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -94,8 +200,8 @@ class App:
         self.read_interval = tk.StringVar(value=f"{settings['read_interval']:g}")
 
         root.title("Anti-AFK")
-        root.geometry('640x820')
-        root.minsize(560, 700)
+        root.geometry('1280x760')
+        root.minsize(1100, 680)
         root.configure(fg_color=BG)
         root.protocol('WM_DELETE_WINDOW', self.on_close)
         root.bind('<FocusIn>', lambda e: self.refresh_screens() if e.widget is root else None)
@@ -112,11 +218,17 @@ class App:
     # -- layout ----------------------------------------------------------------
     def build(self):
         root = self.root
-        root.grid_columnconfigure(0, weight=1)
-        root.grid_rowconfigure(4, weight=1)
+        root.grid_columnconfigure(1, weight=1)
+        root.grid_rowconfigure(0, weight=1)
+        left = ctk.CTkFrame(root, fg_color='transparent', width=600)
+        left.grid(row=0, column=0, sticky='ns')
+        right = ctk.CTkFrame(root, fg_color='transparent')
+        right.grid(row=0, column=1, sticky='nswe')
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(1, weight=1)
 
         # Status card.
-        status = card(root)
+        status = card(left)
         status.grid(row=0, column=0, sticky='we', padx=16, pady=(16, 8))
         status.grid_columnconfigure(1, weight=1)
         self.dot = ctk.CTkLabel(status, text='●', font=ctk.CTkFont(FONT, 34), width=40)
@@ -135,7 +247,7 @@ class App:
                                        font=ctk.CTkFont(FONT, 11, 'bold'))
 
         # Controls.
-        controls = ctk.CTkFrame(root, fg_color='transparent')
+        controls = ctk.CTkFrame(left, fg_color='transparent')
         controls.grid(row=1, column=0, sticky='we', padx=16, pady=4)
         for i in range(4):
             controls.grid_columnconfigure(i, weight=1, uniform='buttons')
@@ -155,12 +267,14 @@ class App:
                                       command=self.stop)
         for i, b in enumerate((self.start_btn, self.test_btn, self.pause_btn, self.stop_btn)):
             b.grid(row=0, column=i, sticky='we', padx=4)
-        ctk.CTkLabel(root, text="F8 pause / resume   ·   F9 stop   ·   Test run sends no input",
+        ctk.CTkLabel(left, text="F8 pause / resume   ·   F9 stop   ·   Test run sends no input",
                      text_color=MUTED, font=ctk.CTkFont(FONT, 11)).grid(row=2, column=0, pady=(0, 4))
 
         # Settings + known screens side by side.
-        middle = ctk.CTkFrame(root, fg_color='transparent')
-        middle.grid(row=3, column=0, sticky='we', padx=12, pady=4)
+        middle = ctk.CTkFrame(left, fg_color='transparent')
+        middle.grid(row=3, column=0, sticky='nswe', padx=12, pady=(4, 16))
+        left.grid_rowconfigure(3, weight=1)
+        middle.grid_rowconfigure(0, weight=1)
         middle.grid_columnconfigure((0, 1), weight=1, uniform='middle')
 
         settings = card(middle)
@@ -211,8 +325,15 @@ class App:
         self.screen_list.grid_columnconfigure(0, weight=1)
 
         # Log.
-        log_card = card(root)
-        log_card.grid(row=4, column=0, sticky='nswe', padx=16, pady=(8, 16))
+        flow_card = card(right)
+        flow_card.grid(row=0, column=0, sticky='nswe', padx=(4, 16), pady=(16, 8))
+        flow_card.grid_columnconfigure(0, weight=1)
+        heading(flow_card, "State diagram").grid(row=0, column=0, sticky='w', padx=16, pady=(14, 0))
+        self.flow = FlowDiagram(flow_card)
+        self.flow.canvas.grid(row=1, column=0, sticky='we', padx=12, pady=(4, 12))
+
+        log_card = card(right)
+        log_card.grid(row=1, column=0, sticky='nswe', padx=(4, 16), pady=(8, 16))
         log_card.grid_columnconfigure(0, weight=1)
         log_card.grid_rowconfigure(1, weight=1)
         heading(log_card, "Activity").grid(row=0, column=0, sticky='w', padx=16, pady=(14, 4))
@@ -358,6 +479,7 @@ class App:
         else:
             self.test_badge.grid_remove()
         self.root.title(f"Anti-AFK · {name.title()}")
+        self.flow.show(name, detail, color)
 
         idle = not running and not self.busy_reading
         for widget in (self.start_btn, self.test_btn, self.read_btn, self.detect_btn):
