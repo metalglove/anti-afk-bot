@@ -27,6 +27,7 @@ import math
 import os
 import random
 import re
+import sys
 import threading
 import time
 import traceback
@@ -418,6 +419,24 @@ def seen(read, phrase):
         return False
     return any(difflib.SequenceMatcher(None, want, _letters(text)).ratio() >= 0.82
                for text, _, _ in read['items'])
+
+
+SUPPORTED_PYTHON = ((3, 11), (3, 14))  # what onnxruntime (used for text recognition) has builds for
+
+
+def text_recognition_problem():
+    """Why text recognition can't run here, or '' if it can."""
+    try:
+        import rapidocr_onnxruntime  # noqa: F401
+        return ''
+    except ImportError:
+        low, high = SUPPORTED_PYTHON
+        have = "%d.%d" % tuple(sys.version_info[:2])
+        hint = (f" Python {have} isn't supported yet: install Python {low[0]}.{low[1]} to "
+                f"{high[0]}.{high[1]} and run pip install -r requirements.txt with it."
+                if not low <= sys.version_info[:2] <= high else
+                " Run pip install -r requirements.txt.")
+        return "Text recognition isn't installed, so no screens will be recognized." + hint
 
 
 _ocr_engine = None
@@ -1342,6 +1361,9 @@ def start(game='', delay=5, dry_run=False):
     focused.set()
     game_hwnd = None
     DRY_RUN = dry_run
+    problem = text_recognition_problem()
+    if problem:
+        print(f"Warning: {problem}")
 
     rules = load_rules()
     print(f"{len(rules['screens'])} known screens loaded from {os.path.basename(RULES_FILE)}.")
