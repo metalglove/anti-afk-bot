@@ -2,45 +2,92 @@
 
 Keeps you from getting kicked for inactivity while you're away from the game.
 
-## Setup
+> Using automation in online games may break the game's terms of service and can get your
+> account banned. Use it at your own risk.
 
-Needs **Python 3.11 to 3.14** on Windows. Newer Python versions don't work yet: the text
-recognition package (onnxruntime) has no build for them, so `pip install` fails with
-"conflicting dependencies". Install a supported version from python.org, then:
+## Getting started (step by step)
+
+You only have to do steps 1 to 3 once.
+
+### 1. Install Python
+
+1. Go to <https://www.python.org/downloads/windows/> and download **Python 3.13** (the
+   "Windows installer (64-bit)"). Don't take a newer version like 3.15: it doesn't work yet.
+2. Open the downloaded file. On the first screen, tick **"Add python.exe to PATH"** at the
+   bottom, then click **Install Now**.
+
+Already have Python? It must be version 3.11, 3.12, 3.13 or 3.14.
+
+### 2. Download the bot
+
+1. On this GitHub page, click the green **Code** button, then **Download ZIP**.
+2. Open your Downloads folder, right-click the ZIP, choose **Extract All...**, and click
+   **Extract**. You now have a folder called `anti-afk-bot-main`.
+
+### 3. Install what the bot needs
+
+1. Open the `anti-afk-bot-main` folder (the one that contains `app.py`).
+2. Click in the address bar at the top of the window (where the folder path is), type
+   `cmd` and press **Enter**. A black window opens.
+3. Copy this line, paste it in the black window (right-click pastes) and press **Enter**:
+
+   ```
+   py -3.13 -m pip install -r requirements.txt
+   ```
+
+   Wait until it's done (a minute or two). The last line should start with
+   "Successfully installed". You can close the black window.
+
+### 4. Start the app
+
+Every time you want to use the bot: open the `anti-afk-bot-main` folder, type `cmd` in the
+address bar again, and run:
 
 ```
-pip install -r requirements.txt
+py -3.13 app.py
 ```
 
-With several Python versions installed, pick one with the `py` launcher, e.g.
-`py -3.13 -m pip install -r requirements.txt` and `py -3.13 app.py`.
+The Anti-AFK window opens. Keep the black window open while you use it.
 
-## Run
+### 5. Use it
 
-Run `python app.py` in this folder to open the app. Administrator rights aren't needed,
-unless the game itself runs as administrator: Windows doesn't let a normal program send
-input to an elevated one, so then start the terminal as administrator too.
+1. Start the game and set its display mode to **Borderless** or **Windowed** (not
+   Fullscreen), so the bot can read the screen.
+2. In the app, click **Test run** and switch to the game. The bot reads the screens and
+   shows in the Activity log what it *would* do, without touching anything. Check that the
+   menus are recognized.
+3. Happy with it? Click **Stop**, then **Start**, and switch to the game within 5 seconds.
 
-1. The game is set to `cod.exe` by default. For another game, click **Detect** in Settings and then click on it, or type its exe name.
-2. Click **Start** and switch to the game.
+| Key (in the game) | What it does |
+| --- | --- |
+| F8 | Pause / resume the bot |
+| F9 | Stop the bot |
+
+The game is set to `cod.exe`. For another game, open **Settings**, click **Detect** and
+then click on the game window.
+
+### Something went wrong?
+
+| Problem | Fix |
+| --- | --- |
+| `'py' is not recognized` | Python isn't installed, or "Add python.exe to PATH" wasn't ticked. Run the Python installer again and tick it. |
+| `conflicting dependencies` or `No matching distribution` | Your Python is too new. Install Python 3.13 (step 1) and use the `py -3.13` commands. |
+| `No module named ...` | Step 3 didn't finish. Run it again. |
+| The bot does nothing in the game | Use Borderless or Windowed mode. If the game runs as administrator, open the black window as administrator too (search "cmd", right-click, "Run as administrator"). |
+| A screen isn't recognized | Open the **Screens** page, press **Read screen**, switch to the game, and send the text it shows to whoever maintains the bot. |
+
+## The app
 
 The app has four pages: **Dashboard** (what the bot is doing right now, a live state
 diagram, stats and the activity log), **History** (every recorded match), **Screens** (the
 known screens from `rules.json`, and **Read screen** to check one) and **Settings** (game,
-start delay, menu read interval, and whether it runs as administrator). **Test run** does
-everything except sending input, so you can walk through the menus and check that each
-screen is recognized before letting it play. Settings are remembered between runs.
-
-| Key | Action |
-| --- | --- |
-| F8 | Pause / resume |
-| F9 | Stop |
-
-Using automation in online games may break the game's terms of service and can get your
-account banned.
+start delay, menu read interval, and whether it runs as administrator). Settings are
+remembered between runs.
 
 Prefer the terminal? `python anti_afk.py` does the same. The game defaults to `cod.exe`
 (`--game` for another one, `--help` for options, `--test` for test mode).
+
+# How it works
 
 ## What the bot is doing
 
@@ -185,8 +232,5 @@ in-game screenshot and read its X,Y in Paint, then run
 start the bot with `--ingame-pixel X,Y,RRGGBB`. Input then only goes out while that pixel
 matches. This needs borderless or windowed mode; in exclusive fullscreen the pixel can't
 be read and the bot stays paused.
-
-Using automation in online games may break the game's terms of service and can get your
-account banned.
 
 More options: `python anti_afk.py --help`
