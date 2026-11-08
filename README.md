@@ -30,6 +30,20 @@ the lobby and the store, so the bot can't click its way into a purchase. It resu
 moment after the menu closes. Run `python anti_afk.py --show-menu` and open a few menus
 to check that it says `MENU` there and `playing` in a match.
 
+### Class selection and other screens you want clicked
+
+The bot can recognize screens you teach it. On the class selection screen, run
+`python anti_afk.py --learn class_select` and follow the prompts. Press F7 on the top-left and
+then the bottom-right corner of something that is only on that screen and doesn't change,
+like its title. Then press F7 on what it should click, such as your class. From then on it
+clicks that spot whenever it sees that screen. Every other menu, including the store, stays
+paused. `--show-menu` shows which screen it recognizes and how close the match is
+(`--match-threshold` makes matching looser or stricter). Learned screens are saved in
+`screens/`, so delete a file there to forget a screen. This only works at the same
+resolution it was learned at, and not in exclusive fullscreen.
+
+### Games that draw their own menu cursor
+
 If it still says `playing` in a menu (some games draw their own cursor), pick a spot of
 the HUD that is only there while playing, such as part of the minimap frame. Take an
 in-game screenshot and read its X,Y in Paint, then run

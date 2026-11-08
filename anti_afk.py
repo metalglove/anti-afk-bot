@@ -4,6 +4,7 @@ Usage:
     python anti_afk.py [--mode human|fast|slow] [--game cod.exe] [--delay N]
                        [--autojoin] [--anti-kick] [--show-focus]
                        [--ingame-pixel X,Y,RRGGBB] [--no-menu-check] [--show-menu]
+                       [--learn NAME]
 
 Hotkeys (work while the game has focus):
     F8  pause / resume (releases all held keys while paused)
@@ -12,9 +13,16 @@ Hotkeys (work while the game has focus):
 Menu safety: input pauses whenever the game looks like it is in a menu (the
 mouse cursor is showing, or the --ingame-pixel check fails), so the bot can't
 click around the store. --show-menu prints what it detects.
+
+Known screens: `--learn class_select` saves a piece of a menu screen (and
+optionally a spot to click). While running, a menu that matches a learned
+screen gets its spot clicked, e.g. to pick a class; every other menu stays
+paused. Screens live in the screens/ folder next to this script.
 """
 import argparse
+import json
 import math
+import os
 import random
 import threading
 import time
@@ -320,9 +328,162 @@ def menu_reason():
     return ''
 
 
+# --------------------------------------------------------------------------- #
+# Known screens (class selection etc.)
+# --------------------------------------------------------------------------- #
+# A learned screen is a crop of the screen (screens/NAME.png) plus where it was
+# taken (screens/NAME.json: {"box": [l, t, r, b], "click": [x, y] or null}).
+# The screen matches when that part of the screen looks like the crop again.
+SCREENS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'screens')
+MATCH_THRESHOLD = 25     # max average color difference (0-255) for a screen to match
+SCREEN_CLICK_DELAY = (1.0, 2.5)   # seconds to "read" a screen before clicking it
+SCREEN_CLICK_COOLDOWN = 4.0       # seconds before clicking the same screen again
+
+screens = []  # [{'name', 'box', 'click', 'image'}]
+
+
+def grab(box):
+    """Screenshot of a screen rectangle (left, top, right, bottom), or None."""
+    try:
+        from PIL import ImageGrab
+        return ImageGrab.grab(bbox=tuple(box)).convert('RGB')
+    except Exception:  # Pillow missing, or the screen can't be read (exclusive fullscreen)
+        return None
+
+
+def screen_difference(screen):
+    """Average color difference (0-255) between the screen now and a learned screen."""
+    from PIL import ImageChops, ImageStat
+    now = grab(screen['box'])
+    if now is None or now.size != screen['image'].size:
+        return 255.0
+    diff = ImageStat.Stat(ImageChops.difference(now, screen['image'])).mean
+    return sum(diff) / len(diff)
+
+
+def load_screens():
+    """Load every learned screen from SCREENS_DIR."""
+    found = []
+    if not os.path.isdir(SCREENS_DIR):
+        return found
+    try:
+        from PIL import Image
+    except ImportError:
+        print("Warning: learned screens need Pillow (pip install -r requirements.txt); ignoring them.")
+        return found
+    for file in sorted(os.listdir(SCREENS_DIR)):
+        if not file.endswith('.json'):
+            continue
+        name = file[:-5]
+        try:
+            with open(os.path.join(SCREENS_DIR, file)) as f:
+                info = json.load(f)
+            image = Image.open(os.path.join(SCREENS_DIR, name + '.png')).convert('RGB')
+            found.append({'name': name, 'box': info['box'], 'click': info.get('click'),
+                          'image': image})
+        except (OSError, ValueError, KeyError) as e:
+            print(f"Warning: can't load screen '{name}': {e}")
+    return found
+
+
+def matching_screen():
+    """(learned screen, difference) that best matches the screen now, or (None, best diff)."""
+    best, best_diff = None, 255.0
+    for screen in screens:
+        diff = screen_difference(screen)
+        if diff < best_diff:
+            best, best_diff = screen, diff
+    if best is not None and best_diff <= MATCH_THRESHOLD:
+        return best, best_diff
+    return None, best_diff
+
+
+def learn_screen(name):
+    """Save part of the current screen as a known screen, using F7 at the cursor."""
+    from pynput.keyboard import Listener as KeyListener
+    if not name.replace('_', '').replace('-', '').isalnum():
+        print("Use a simple name, e.g. class_select.")
+        return
+    os.makedirs(SCREENS_DIR, exist_ok=True)
+    json_path = os.path.join(SCREENS_DIR, name + '.json')
+    points = []
+    done = threading.Event()
+
+    print(f"Learning screen '{name}'. Open that screen in the game, then:\n"
+          "  1. Point the mouse at the top-left corner of something that is only on this\n"
+          "     screen and doesn't change (a title like 'CHOOSE CLASS'), press F7.\n"
+          "  2. Point at its bottom-right corner, press F7.\n"
+          "  3. Optional: point at what the bot should click here, press F7.\n"
+          "Press F9 when done. Keep the mouse out of the box from steps 1 and 2.")
+
+    def on_press(key):
+        if key == STOP_KEY:
+            done.set()
+            return False
+        if key != Key.f7:
+            return None
+        point = cursor_pos()
+        points.append((point.x, point.y))
+        if len(points) == 1:
+            print(f"Top-left: {point.x},{point.y}")
+        elif len(points) == 2:
+            (x1, y1), (x2, y2) = points
+            box = [min(x1, x2), min(y1, y2), max(x1, x2) + 1, max(y1, y2) + 1]
+            if box[2] - box[0] < 8 or box[3] - box[1] < 8:
+                print("That box is too small; start again with the top-left corner.")
+                points.clear()
+                return None
+            image = grab(box)
+            if image is None:
+                print("Couldn't read the screen. Use borderless or windowed mode.")
+                points.clear()
+                return None
+            image.save(os.path.join(SCREENS_DIR, name + '.png'))
+            with open(json_path, 'w') as f:
+                json.dump({'box': box, 'click': None}, f)
+            print(f"Saved box {box}. Press F7 on a spot to click, or F9 to finish.")
+        elif len(points) == 3:
+            with open(json_path) as f:
+                info = json.load(f)
+            info['click'] = [point.x, point.y]
+            with open(json_path, 'w') as f:
+                json.dump(info, f)
+            print(f"The bot will click {point.x},{point.y} on this screen. Done.")
+            done.set()
+            return False
+        return None
+
+    with KeyListener(on_press=on_press):
+        try:
+            done.wait()
+        except KeyboardInterrupt:
+            pass
+    if len(points) >= 2:
+        print(f"Saved to {SCREENS_DIR}. Check it with --show-menu.")
+    else:
+        print("Nothing saved.")
+
+
+def click_screen(screen):
+    """Click a learned screen's click spot, like a person would."""
+    if not wait(random.uniform(*SCREEN_CLICK_DELAY)):
+        return
+    if not (running.is_set() and focused.is_set()):
+        return
+    current, _ = matching_screen()
+    if current is not screen:
+        return  # the screen changed while we waited
+    x, y = screen['click']
+    inputs.click_at(x, y)
+    print(f"Clicked {x},{y} on screen '{screen['name']}'.")
+
+
 def watch_menu():
-    """Pause input while a menu is open; resume once it has been gone a moment."""
+    """Pause input while a menu is open; resume once it has been gone a moment.
+    On a learned screen with a click spot, click it (e.g. to pick a class)."""
     clear_since = None
+    last_clicked = {}  # screen name -> time
+    next_screen_check = 0.0
     while not stop_event.is_set():
         reason = menu_reason() if focused.is_set() else ''
         if reason:
@@ -331,6 +492,14 @@ def watch_menu():
                 no_menu.clear()
                 inputs.release_all()
                 print(f"Menu detected ({reason}), pausing input.")
+            now = time.monotonic()
+            if screens and now >= next_screen_check:
+                next_screen_check = now + 0.5
+                screen, _ = matching_screen()
+                if (screen and screen['click'] and
+                        now - last_clicked.get(screen['name'], 0) >= SCREEN_CLICK_COOLDOWN):
+                    click_screen(screen)
+                    last_clicked[screen['name']] = time.monotonic()
         elif not no_menu.is_set() and focused.is_set():
             clear_since = clear_since or time.monotonic()
             if time.monotonic() - clear_since >= MENU_RESUME_AFTER:
@@ -352,6 +521,10 @@ def show_menu():
                 color = '%02X%02X%02X' % rgb if rgb else 'unreadable'
                 parts.append(f"pixel {x},{y}: {color}")
             reason = menu_reason()
+            if screens:
+                screen, diff = matching_screen()
+                parts.append(f"screen: {screen['name'] if screen else 'unknown'} "
+                             f"(diff {diff:.0f}, match <= {MATCH_THRESHOLD})")
             parts.append(f"=> {'MENU (' + reason + ')' if reason else 'playing'}")
             line = '   '.join(parts)
             if line != last:
@@ -442,6 +615,18 @@ class InputState:
                 del self._buttons[button]
             else:
                 self._buttons[button] = count - 1
+
+    def click_at(self, x, y):
+        """Move to a screen spot and click it. Only for learned screens, which are menus,
+        so it skips the menu check but still needs the bot running and the game in front."""
+        with self._lock:
+            if not (running.is_set() and focused.is_set()) or stop_event.is_set():
+                return
+            pydirectinput.moveTo(x, y)
+            time.sleep(random.uniform(0.08, 0.2))
+            pydirectinput.mouseDown(button='left')
+            time.sleep(random.uniform(0.05, 0.1))
+            pydirectinput.mouseUp(button='left')
 
     def release_all(self):
         with self._lock:
@@ -949,7 +1134,7 @@ def on_hotkey(key):
 
 
 def main():
-    global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE
+    global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE, MATCH_THRESHOLD, screens
     parser = argparse.ArgumentParser(description="Anti-AFK input bot.")
     parser.add_argument('--mode', choices=['human', 'fast', 'slow'], default='human')
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
@@ -974,11 +1159,18 @@ def main():
                         help=f"max color difference per channel for --ingame-pixel "
                              f"(default {PIXEL_TOLERANCE})")
     parser.add_argument('--show-menu', action='store_true',
-                        help="just print what menu detection sees (cursor, pixel color)")
+                        help="just print what menu detection sees (cursor, pixel, known screen)")
+    parser.add_argument('--learn', metavar='NAME',
+                        help="save the current game screen as a known screen (e.g. class_select), "
+                             "optionally with a spot to click there")
+    parser.add_argument('--match-threshold', type=float, default=MATCH_THRESHOLD,
+                        help=f"how different a learned screen may look and still match "
+                             f"(default {MATCH_THRESHOLD})")
     args = parser.parse_args()
 
     LOOK_SCALE, MAX_STILL = args.look_scale, args.max_still
     MENU_CHECK, PIXEL_TOLERANCE = not args.no_menu_check, args.pixel_tolerance
+    MATCH_THRESHOLD = args.match_threshold
     if args.ingame_pixel:
         try:
             x, y, color = parse_pixel(args.ingame_pixel, need_color=not args.show_menu)
@@ -996,6 +1188,13 @@ def main():
     if args.show_focus:
         show_focus()
         return
+    if args.learn:
+        learn_screen(args.learn)
+        return
+    screens = load_screens()
+    for screen in screens:
+        action = f"click {screen['click'][0]},{screen['click'][1]}" if screen['click'] else "stay paused"
+        print(f"Known screen '{screen['name']}': {action}.")
     if args.show_menu:
         show_menu()
         return
