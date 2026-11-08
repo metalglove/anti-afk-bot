@@ -45,6 +45,45 @@ current state:
 [21:05:35] PLAYING   (after 1s RESUMING)
 ```
 
+```mermaid
+flowchart TD
+    start(["STARTING · countdown"]) --> play
+    play(["PLAYING<br/>move, look, shoot"])
+
+    play -- "VICTORY / DEFEAT on screen" --> over["victory / defeat<br/><b>pause input</b>"]
+    play -- "kicked for inactivity" --> kicked["kicked<br/><b>click EXIT</b>"]
+    play -- "cursor shows, no rule matches" --> unknown["unknown menu or store<br/><b>send nothing</b>"]
+
+    kicked --> main["main_menu<br/><b>click QUICK PLAY</b>"]
+    main --> search["searching<br/><b>wait</b>"]
+    search --> lobby["lobby / map voting<br/><b>wait</b>"]
+    over --> lobby
+    lobby -- "match loads" --> cls["class_select<br/><b>click SELECT</b>"]
+
+    cls -- "cursor hidden" --> resume(["RESUMING<br/>wait 1.5s"])
+    unknown -- "cursor hidden" --> resume
+    resume --> play
+
+    subgraph anytime["At any time"]
+        direction LR
+        paused(["F8 → PAUSED"])
+        nf(["game not in front → NOT FOCUSED"])
+        stopped(["F9 → STOPPED"])
+    end
+
+    classDef playing fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef clicks fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef waits fill:#f1f5f9,stroke:#64748b,color:#1e293b
+    classDef danger fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+    classDef side fill:#fafafa,stroke:#a1a1aa,color:#3f3f46
+    class play,resume playing
+    class kicked,main,cls clicks
+    class search,lobby,over,start waits
+    class unknown danger
+    class paused,nf,stopped side
+    style anytime fill:#ffffff,stroke:#d4d4d8,color:#52525b
+```
+
 | State | Meaning |
 | --- | --- |
 | STARTING | Countdown before it begins |
