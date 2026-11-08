@@ -4,7 +4,7 @@ Usage:
     python anti_afk.py [--game cod.exe] [--delay N]
                        [--autojoin] [--anti-kick] [--show-focus]
                        [--ingame-pixel X,Y,RRGGBB] [--no-menu-check] [--show-menu]
-                       [--learn NAME]
+                       [--read-screen]
 
 Hotkeys (work while the game has focus):
     F8  pause / resume (releases all held keys while paused)
@@ -14,16 +14,17 @@ Menu safety: input pauses whenever the game looks like it is in a menu (the
 mouse cursor is showing, or the --ingame-pixel check fails), so the bot can't
 click around the store. --show-menu prints what it detects.
 
-Known screens: `--learn class_select` saves a piece of a menu screen (and
-optionally a spot to click). While running, a menu that matches a learned
-screen gets its spot clicked, e.g. to pick a class; every other menu stays
-paused. Screens live in the screens/ folder next to this script.
+Known screens: while a menu is open, the bot reads the text on screen and
+looks it up in rules.json, e.g. "KICKED FOR INACTIVITY" -> click "EXIT".
+Unknown menus, and any screen showing STORE, PURCHASE etc., stay paused.
+--read-screen prints the text it reads, to help add rules.
 """
 import argparse
 import json
 import math
 import os
 import random
+import re
 import threading
 import time
 import traceback
@@ -341,30 +342,22 @@ def menu_reason():
 
 
 # --------------------------------------------------------------------------- #
-# Known screens (class selection etc.)
+# Reading the screen (which menu is open?)
 # --------------------------------------------------------------------------- #
-# A learned screen is a crop of the game window (screens/NAME.png) plus where it
-# was taken (screens/NAME.json). Positions are stored as fractions of the game
-# window's client area ({"box": [l, t, r, b], "click": [x, y] or null, all 0-1}),
-# so the window can be moved or resized: the box is found at the same relative
-# spot and the crop is scaled to its current size before comparing.
-SCREENS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'screens')
-MATCH_THRESHOLD = 25     # max average color difference (0-255) for a screen to match
+# While a menu is open, a background thread screenshots the game window about
+# once a second and reads the text on it (OCR). rules.json then says what each
+# screen is and what to click, by the words on it, e.g.
+#   {"name": "kicked", "if_seen": ["KICKED FOR INACTIVITY"], "click": "EXIT"}
+# Nothing is clicked while any "never_click_if_seen" word (STORE, PURCHASE...)
+# is on screen. No per-resolution setup: the words are found wherever they are.
+RULES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rules.json')
+READ_INTERVAL = 1.0               # seconds between screen reads while a menu is open
+READ_MAX_AGE = 3.0                # a read older than this is not trusted
 SCREEN_CLICK_DELAY = (1.0, 2.5)   # seconds to "read" a screen before clicking it
 SCREEN_CLICK_COOLDOWN = 4.0       # seconds before clicking the same screen again
+OCR_MIN_CONFIDENCE = 0.5
 
-screens = []  # [{'name', 'box', 'click', 'image'}], box/click as window fractions
-
-
-def to_screen(fx, fy, rect=None):
-    """Window fraction -> screen pixel."""
-    left, top, width, height = rect or window_client_rect()
-    return round(left + fx * width), round(top + fy * height)
-
-
-def to_fraction(x, y, rect):
-    left, top, width, height = rect
-    return (x - left) / width, (y - top) / height
+rules = {'screens': [], 'never_click_if_seen': []}
 
 
 def grab(box):
@@ -376,153 +369,159 @@ def grab(box):
         return None
 
 
-def screen_difference(screen):
-    """Average color difference (0-255) between the screen now and a learned screen."""
-    from PIL import ImageChops, ImageStat
-    from PIL import Image
-    rect = window_client_rect()
-    l, t, r, b = screen['box']
-    left, top = to_screen(l, t, rect)
-    right, bottom = to_screen(r, b, rect)
-    if right - left < 4 or bottom - top < 4:
-        return 255.0
-    now = grab((left, top, right, bottom))
-    if now is None:
-        return 255.0
-    saved = screen['image']
-    if saved.size != now.size:
-        saved = saved.resize(now.size, Image.BILINEAR)
-    diff = ImageStat.Stat(ImageChops.difference(now, saved)).mean
-    return sum(diff) / len(diff)
-
-
-def load_screens():
-    """Load every learned screen from SCREENS_DIR."""
-    found = []
-    if not os.path.isdir(SCREENS_DIR):
-        return found
+def load_rules():
+    """Load rules.json; returns the rules, or empty rules if it can't be read."""
     try:
-        from PIL import Image
-    except ImportError:
-        print("Warning: learned screens need Pillow (pip install -r requirements.txt); ignoring them.")
-        return found
-    for file in sorted(os.listdir(SCREENS_DIR)):
-        if not file.endswith('.json'):
+        with open(RULES_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+        data.setdefault('screens', [])
+        data.setdefault('never_click_if_seen', [])
+        for screen in data['screens']:
+            screen.setdefault('click', None)
+            screen['if_seen'] = list(screen.get('if_seen', []))
+        return data
+    except (OSError, ValueError) as e:
+        print(f"Warning: can't read {os.path.basename(RULES_FILE)} ({e}); no screens will be clicked.")
+        return {'screens': [], 'never_click_if_seen': []}
+
+
+def phrase_pattern(phrase):
+    """Regex for a phrase that also matches when OCR drops the spaces ('QUICKPLAY')."""
+    words = [re.escape(w) for w in phrase.split()]
+    return re.compile(r'(?<![A-Z0-9])' + r'\s*'.join(words) + r'(?![A-Z0-9])', re.IGNORECASE)
+
+
+_ocr_engine = None
+_ocr_lock = threading.Lock()
+
+
+def ocr(image):
+    """Text on an image: [(text, (x, y) center, confidence)]."""
+    global _ocr_engine
+    import numpy
+    with _ocr_lock:
+        if _ocr_engine is None:
+            print("Loading text recognition (first time takes a few seconds)...")
+            from rapidocr_onnxruntime import RapidOCR
+            _ocr_engine = RapidOCR()
+        result, _ = _ocr_engine(numpy.asarray(image))
+    items = []
+    for box, text, confidence in result or []:
+        if float(confidence) < OCR_MIN_CONFIDENCE:
             continue
-        name = file[:-5]
-        try:
-            with open(os.path.join(SCREENS_DIR, file)) as f:
-                info = json.load(f)
-            image = Image.open(os.path.join(SCREENS_DIR, name + '.png')).convert('RGB')
-            found.append({'name': name, 'box': info['box'], 'click': info.get('click'),
-                          'image': image})
-        except (OSError, ValueError, KeyError) as e:
-            print(f"Warning: can't load screen '{name}': {e}")
-    return found
+        x = sum(p[0] for p in box) / 4
+        y = sum(p[1] for p in box) / 4
+        items.append((text.strip(), (x, y), float(confidence)))
+    return items
 
 
-def matching_screen():
-    """(learned screen, difference) that best matches the screen now, or (None, best diff)."""
-    best, best_diff = None, 255.0
-    for screen in screens:
-        diff = screen_difference(screen)
-        if diff < best_diff:
-            best, best_diff = screen, diff
-    if best is not None and best_diff <= MATCH_THRESHOLD:
-        return best, best_diff
-    return None, best_diff
+def read_screen():
+    """Screenshot the game window and read it. Returns a 'read' dict or None."""
+    rect = window_client_rect()
+    left, top, width, height = rect
+    image = grab((left, top, left + width, top + height))
+    if image is None:
+        return None
+    items = [(text, (round(left + x), round(top + y)), c) for text, (x, y), c in ocr(image)]
+    return {'time': time.monotonic(), 'items': items,
+            'text': ' | '.join(text for text, _, _ in items)}
 
 
-def learn_screen(name):
-    """Save part of the current screen as a known screen, using F7 at the cursor."""
-    from pynput.keyboard import Listener as KeyListener
-    if not name.replace('_', '').replace('-', '').isalnum():
-        print("Use a simple name, e.g. class_select.")
-        return
-    os.makedirs(SCREENS_DIR, exist_ok=True)
-    json_path = os.path.join(SCREENS_DIR, name + '.json')
-    points = []
-    state = {}  # 'rect': the game window's client area when the box was taken
-    done = threading.Event()
+def find_text(read, phrase):
+    """Screen position of the OCR item that best matches `phrase`, or None.
+    Prefers an item that is just that phrase (a button) over one that contains it."""
+    pattern = phrase_pattern(phrase)
+    best = None
+    for text, pos, _ in read['items']:
+        m = pattern.search(text)
+        if not m:
+            continue
+        extra = len(text) - (m.end() - m.start())  # how much else is in this item
+        if best is None or extra < best[0]:
+            best = (extra, pos)
+    return best[1] if best else None
 
-    print(f"Learning screen '{name}'. Open that screen in the game, then:\n"
-          "  1. Point the mouse at the top-left corner of something that is only on this\n"
-          "     screen and doesn't change (a title like 'CHOOSE CLASS'), press F7.\n"
-          "  2. Point at its bottom-right corner, press F7.\n"
-          "  3. Optional: point at what the bot should click here, press F7.\n"
-          "Press F9 when done. Keep the mouse out of the box from steps 1 and 2.")
 
-    def on_press(key):
-        if key == STOP_KEY:
-            done.set()
-            return False
-        if key != Key.f7:
-            return None
-        point = cursor_pos()
-        points.append((point.x, point.y))
-        if len(points) == 1:
-            state['rect'] = window_client_rect(_user32().GetForegroundWindow())
-            print(f"Top-left: {point.x},{point.y}")
-        elif len(points) == 2:
-            (x1, y1), (x2, y2) = points
-            box = [min(x1, x2), min(y1, y2), max(x1, x2) + 1, max(y1, y2) + 1]
-            if box[2] - box[0] < 8 or box[3] - box[1] < 8:
-                print("That box is too small; start again with the top-left corner.")
-                points.clear()
-                return None
-            image = grab(box)
-            if image is None:
-                print("Couldn't read the screen. Use borderless or windowed mode.")
-                points.clear()
-                return None
-            rect = state['rect']
-            rel_box = [*to_fraction(box[0], box[1], rect), *to_fraction(box[2], box[3], rect)]
-            if not all(0 <= v <= 1 for v in rel_box):
-                print("That box isn't inside the game window; start again.")
-                points.clear()
-                return None
-            image.save(os.path.join(SCREENS_DIR, name + '.png'))
-            with open(json_path, 'w') as f:
-                json.dump({'box': rel_box, 'click': None, 'window': list(rect[2:])}, f)
-            print(f"Saved box {box} (game window {rect[2]}x{rect[3]}). "
-                  "Press F7 on a spot to click, or F9 to finish.")
-        elif len(points) == 3:
-            with open(json_path) as f:
-                info = json.load(f)
-            info['click'] = list(to_fraction(point.x, point.y, state['rect']))
-            with open(json_path, 'w') as f:
-                json.dump(info, f)
-            print(f"The bot will click {point.x},{point.y} on this screen. Done.")
-            done.set()
-            return False
+def classify(read):
+    """Which rule matches a read: (screen rule or None, danger word or None)."""
+    if read is None:
+        return None, None
+    danger = next((w for w in rules['never_click_if_seen']
+                   if phrase_pattern(w).search(read['text'])), None)
+    for screen in rules['screens']:
+        if screen['if_seen'] and all(phrase_pattern(p).search(read['text'])
+                                     for p in screen['if_seen']):
+            return screen, danger
+    return None, danger
+
+
+class ScreenReader:
+    """Reads the screen in the background while a menu is open."""
+
+    def __init__(self):
+        self.latest = None
+        self.lock = threading.Lock()
+        self.wanted = threading.Event()  # set while the state machine wants reads
+
+    def run(self):
+        warned = False
+        while not stop_event.is_set():
+            if not self.wanted.wait(0.2):
+                with self.lock:
+                    self.latest = None
+                continue
+            try:
+                read = read_screen()
+            except Exception as e:  # OCR missing or failed: stay safe, just don't click
+                if not warned:
+                    print(f"Can't read the screen ({e}). Menus stay paused; nothing is clicked.")
+                    warned = True
+                read = None
+            if read is None and not warned:
+                print("Can't capture the game window. Use borderless or windowed mode.")
+                warned = True
+            with self.lock:
+                self.latest = read
+            stop_event.wait(READ_INTERVAL)
+
+    def fresh(self, newer_than=0.0):
+        with self.lock:
+            read = self.latest
+        if read and read['time'] > newer_than and time.monotonic() - read['time'] <= READ_MAX_AGE:
+            return read
         return None
 
-    with KeyListener(on_press=on_press):
-        try:
-            done.wait()
-        except KeyboardInterrupt:
-            pass
-    if len(points) >= 2:
-        print(f"Saved to {SCREENS_DIR}. Check it with --show-menu.")
-    else:
-        print("Nothing saved.")
+
+reader = ScreenReader()
 
 
-def click_screen(screen):
-    """Click a learned screen's click spot, like a person would."""
+def click_screen(screen, seen_at):
+    """Click a screen's button after a short pause, if the screen is still there."""
     if not wait(random.uniform(*SCREEN_CLICK_DELAY)):
         return
     if not (running.is_set() and focused.is_set()):
         return
-    current, _ = matching_screen()
-    if current is not screen:
+    read = None
+    deadline = time.monotonic() + READ_INTERVAL + READ_MAX_AGE
+    while read is None and time.monotonic() < deadline:  # wait for a read taken after the pause
+        read = reader.fresh(newer_than=seen_at)
+        if read is None and not wait(0.1):
+            return
+    if read is None:
+        return
+    current, danger = classify(read)
+    if current is not screen or danger or not menu_reason():
         return  # the screen changed while we waited
-    x, y = to_screen(*screen['click'])
+    pos = find_text(read, screen['click'])
+    if pos is None:
+        print(f"Screen '{screen['name']}': couldn't find '{screen['click']}' to click.")
+        return
+    x, y = pos
     if DRY_RUN:
-        print(f"Test: would click {x},{y} on screen '{screen['name']}'.")
+        print(f"Test: would click '{screen['click']}' at {x},{y} on screen '{screen['name']}'.")
         return
     inputs.click_at(x, y)
-    print(f"Clicked {x},{y} on screen '{screen['name']}'.")
+    print(f"Clicked '{screen['click']}' at {x},{y} on screen '{screen['name']}'.")
 
 
 # --------------------------------------------------------------------------- #
@@ -537,21 +536,21 @@ def click_screen(screen):
 #   NOT FOCUSED   the game isn't the window in front (only with --game)
 #   PLAYING       in a match: all actions run
 #   RESUMING      a menu just closed; waits MENU_RESUME_AFTER before PLAYING
-#   SCREEN name   a learned screen (e.g. class_select): clicks its spot, if it has one
-#   MENU          a menu it doesn't know (store, settings...): nothing is sent
+#   SCREEN name   a screen from rules.json (e.g. class_select): clicks its button
+#   MENU          a menu it doesn't know, or a store/purchase screen: nothing is sent
 STARTING, PAUSED, NOT_FOCUSED, PLAYING, RESUMING, SCREEN, MENU, STOPPED = (
     'STARTING', 'PAUSED', 'NOT FOCUSED', 'PLAYING', 'RESUMING', 'SCREEN', 'MENU', 'STOPPED')
 DRY_RUN = False  # test mode: detect states and report clicks, but send nothing
-UNKNOWN_MENU_REMINDER = 300  # seconds in an unknown menu before suggesting --learn
+UNKNOWN_MENU_REMINDER = 300  # seconds in an unknown menu before suggesting a rule
 
 state_lock = threading.Lock()
 state = {'name': STOPPED, 'detail': '', 'since': time.monotonic()}
 started = threading.Event()  # set once the countdown is over
 
 
-def detect(last_screen=None):
-    """Raw state from what's on screen now: (state, detail, learned screen or None).
-    No delays applied; StateMachine adds those."""
+def detect(read=None):
+    """Raw state: (state, detail, screen rule or None). `read` is the latest screen
+    read (or None if there isn't a fresh one). No delays; the state machine adds those."""
     if not started.is_set():
         return STARTING, '', None
     if stop_event.is_set():
@@ -563,11 +562,15 @@ def detect(last_screen=None):
     reason = menu_reason()
     if not reason:
         return PLAYING, '', None
-    screen = last_screen if last_screen is not None else (matching_screen()[0] if screens else None)
+    if read is None:
+        return MENU, 'reading the screen...', None
+    screen, danger = classify(read)
+    if danger:
+        return MENU, f"'{danger}' on screen: never clicking here", None
     if screen:
-        action = 'clicking' if screen['click'] else 'waiting'
+        action = f"clicking {screen['click']}" if screen['click'] else 'waiting'
         return SCREEN, f"{screen['name']} ({action})", screen
-    return MENU, f"unknown, {reason}, nothing sent", None
+    return MENU, "unknown, nothing sent", None
 
 
 def set_console_title(text):
@@ -615,19 +618,19 @@ def enter_state(name, detail=''):
 
 def run_state_machine():
     """Track the state and act on it: release input outside PLAYING, wait a moment
-    before resuming after a menu, and click learned screens."""
+    before resuming after a menu, and click known screens."""
     resume_since = None
     last_clicked = {}            # screen name -> time
-    screen, next_screen_check = None, 0.0
     last_reminder = time.monotonic()
     while not stop_event.is_set():
         now = time.monotonic()
-        if not (screens and focused.is_set() and menu_reason()):
-            screen, next_screen_check = None, 0.0     # check right away when a menu opens
-        elif now >= next_screen_check:  # screenshots are slower; refresh 3x a second
-            next_screen_check = now + 0.3
-            screen = matching_screen()[0]
-        name, detail, screen_now = detect(screen or False)
+        in_menu = started.is_set() and running.is_set() and focused.is_set() and bool(menu_reason())
+        if in_menu:
+            reader.wanted.set()
+        else:
+            reader.wanted.clear()
+        read = reader.fresh() if in_menu else None
+        name, detail, screen = detect(read)
         current, _, lasted = current_state()
 
         if name == PLAYING and current not in (PLAYING, STARTING) and MENU_RESUME_AFTER > 0:
@@ -642,20 +645,44 @@ def run_state_machine():
         if name != STARTING:  # the countdown reports STARTING itself
             enter_state(name, detail)
 
-        if name == SCREEN and screen_now['click'] and \
-                now - last_clicked.get(screen_now['name'], 0) >= SCREEN_CLICK_COOLDOWN:
-            click_screen(screen_now)
-            last_clicked[screen_now['name']] = time.monotonic()
-        elif name == MENU and lasted > UNKNOWN_MENU_REMINDER and \
+        if name == SCREEN and screen['click'] and \
+                now - last_clicked.get(screen['name'], 0) >= SCREEN_CLICK_COOLDOWN:
+            click_screen(screen, read['time'])
+            last_clicked[screen['name']] = time.monotonic()
+        elif name == MENU and read and lasted > UNKNOWN_MENU_REMINDER and \
                 now - last_reminder > UNKNOWN_MENU_REMINDER:
             last_reminder = now
-            print(f"   Still in an unknown menu after {format_duration(lasted)}. If this screen "
-                  "needs a click, teach it with --learn.")
+            print(f"   Still in an unknown menu after {format_duration(lasted)}. Text on screen:\n"
+                  f"   {read['text'][:300]}\n"
+                  f"   If this screen needs a click, add it to {os.path.basename(RULES_FILE)}.")
         stop_event.wait(0.1)
+
+
+def print_screen_text(delay=3):
+    """Read the game window once and print its text, to help write rules."""
+    global rules
+    rules = load_rules()
+    print(f"Reading the screen in {delay}s; switch to the game...")
+    time.sleep(delay)
+    read = read_screen()
+    if read is None:
+        print("Couldn't capture the screen. Use borderless or windowed mode.")
+        return
+    print("Text on screen:\n  " + read['text'])
+    screen, danger = classify(read)
+    if danger:
+        print(f"=> '{danger}' is on screen: the bot never clicks here.")
+    elif screen:
+        target = f", clicks '{screen['click']}' at {find_text(read, screen['click'])}" if screen['click'] else ''
+        print(f"=> screen '{screen['name']}'{target}")
+    else:
+        print("=> no rule matches this screen (the bot sends nothing here).")
 
 
 def show_menu():
     """Print what menu detection sees whenever it changes (Ctrl+C to quit)."""
+    global rules
+    rules = load_rules()
     print("Open and close menus in the game; what the bot sees is printed below. Ctrl+C to quit.")
     started.set()
     last = None
@@ -667,18 +694,14 @@ def show_menu():
                 rgb = screen_pixel(x, y)
                 color = '%02X%02X%02X' % rgb if rgb else 'unreadable'
                 parts.append(f"pixel {x},{y}: {color}")
-            screen = None
-            if screens:
-                screen, diff = matching_screen()
-                parts.append(f"screen: {screen['name'] if screen else 'unknown'} "
-                             f"(diff {diff:.0f}, match <= {MATCH_THRESHOLD})")
-            name, detail, _ = detect(screen or False)
+            read = read_screen() if menu_reason() else None
+            name, detail, _ = detect(read)
             parts.append(f"=> {name}" + (f": {detail}" if detail else ''))
             line = '   '.join(parts)
             if line != last:
                 print(line)
                 last = line
-            stop_event.wait(0.5)
+            stop_event.wait(1.0)
     except KeyboardInterrupt:
         pass
 
@@ -765,7 +788,7 @@ class InputState:
                 self._buttons[button] = count - 1
 
     def click_at(self, x, y):
-        """Move to a screen spot and click it. Only for learned screens, which are menus,
+        """Move to a screen spot and click it. Only for known screens, which are menus,
         so it skips the menu check but still needs the bot running and the game in front."""
         with self._lock:
             if not (running.is_set() and focused.is_set()) or stop_event.is_set():
@@ -1134,14 +1157,13 @@ def _spawn(target, *args):
     _threads.append(t)
 
 
-def describe_screens():
-    for screen in screens:
-        if screen['click']:
-            cx, cy = screen['click']
-            action = f"click at {cx:.0%} across, {cy:.0%} down the game window"
-        else:
-            action = "wait"
-        print(f"Known screen '{screen['name']}': {action}.")
+def describe_rules():
+    for screen in rules['screens']:
+        action = f"click '{screen['click']}'" if screen['click'] else "wait"
+        print(f"Screen '{screen['name']}' (shows {' + '.join(screen['if_seen'])}): {action}.")
+    if rules['never_click_if_seen']:
+        print("Never clicks while any of these is on screen: "
+              + ', '.join(rules['never_click_if_seen']))
 
 
 def is_started():
@@ -1152,7 +1174,7 @@ def is_started():
 def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False):
     """Start a session in background threads and return right away.
     dry_run: only detect and report states and clicks; send no input at all."""
-    global DRY_RUN, screens, game_hwnd
+    global DRY_RUN, rules, game_hwnd
     stop()
     stop_event.clear()
     running.set()
@@ -1162,8 +1184,8 @@ def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False
     game_hwnd = None
     DRY_RUN = dry_run
 
-    screens = load_screens()
-    describe_screens()
+    rules = load_rules()
+    describe_rules()
     tasks = [] if dry_run else list(HUMAN_MODE)
     if autojoin_on and not dry_run:
         tasks.append(autojoin)
@@ -1184,6 +1206,7 @@ def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False
         print("Test mode: nothing is sent. Go through the menus and watch the state.")
 
     enter_state(STARTING)
+    _spawn(reader.run)
     _spawn(run_state_machine)
     _spawn(_countdown, delay, tasks)
 
@@ -1215,7 +1238,7 @@ def stop():
 
 
 def main():
-    global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE, MATCH_THRESHOLD, screens
+    global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE
     parser = argparse.ArgumentParser(description="Anti-AFK input bot. Run app.py for the window version.")
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
     parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
@@ -1242,17 +1265,13 @@ def main():
                         help="just print what menu detection sees (cursor, pixel, known screen)")
     parser.add_argument('--test', action='store_true',
                         help="run the state machine without sending any input")
-    parser.add_argument('--learn', metavar='NAME',
-                        help="save the current game screen as a known screen (e.g. class_select), "
-                             "optionally with a spot to click there")
-    parser.add_argument('--match-threshold', type=float, default=MATCH_THRESHOLD,
-                        help=f"how different a learned screen may look and still match "
-                             f"(default {MATCH_THRESHOLD})")
+    parser.add_argument('--read-screen', action='store_true',
+                        help="after 3s, read the game window once and print its text and "
+                             "which rule matches, to help write rules.json")
     args = parser.parse_args()
 
     LOOK_SCALE, MAX_STILL = args.look_scale, args.max_still
     MENU_CHECK, PIXEL_TOLERANCE = not args.no_menu_check, args.pixel_tolerance
-    MATCH_THRESHOLD = args.match_threshold
     if args.ingame_pixel:
         try:
             x, y, color = parse_pixel(args.ingame_pixel, need_color=not args.show_menu)
@@ -1263,12 +1282,10 @@ def main():
     if args.show_focus:
         show_focus()
         return
-    if args.learn:
-        learn_screen(args.learn)
+    if args.read_screen:
+        print_screen_text()
         return
     if args.show_menu:
-        screens = load_screens()
-        describe_screens()
         show_menu()
         return
 

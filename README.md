@@ -37,10 +37,11 @@ The terminal prints every state change with the time, and the terminal's title s
 current state:
 
 ```
-[21:04:12] SCREEN: main_menu (clicking)   (after 3m10s MENU)
-[21:04:40] MENU: unknown, mouse cursor is showing, nothing sent   (after 28s SCREEN)
-[21:05:31] SCREEN: class_select (clicking)   (after 51s MENU)
-[21:05:34] RESUMING: playing in 1.5s   (after 3s SCREEN)
+[21:04:12] SCREEN: kicked (clicking EXIT)   (after 3m10s PLAYING)
+[21:04:16] SCREEN: main_menu (clicking QUICK PLAY)
+[21:04:21] SCREEN: searching (waiting)
+[21:05:31] SCREEN: class_select (clicking SELECT)
+[21:05:34] RESUMING: playing in 1.5s   (after 1m18s SCREEN)
 [21:05:35] PLAYING   (after 1s RESUMING)
 ```
 
@@ -51,8 +52,8 @@ current state:
 | NOT FOCUSED | The game isn't the window in front |
 | PLAYING | In a match: the only state where it moves, shoots and presses keys |
 | RESUMING | A menu just closed; it waits a moment before playing |
-| SCREEN | A screen you taught it (see below); it clicks the spot you picked |
-| MENU | A menu it doesn't know, like the store: it sends nothing |
+| SCREEN | A screen listed in `rules.json` (see below); it clicks that screen's button |
+| MENU | A menu it doesn't know, or one showing STORE, PURCHASE etc.: it sends nothing |
 
 ## Menus and the store
 
@@ -61,20 +62,30 @@ the lobby and the store, so the bot can't click its way into a purchase. It resu
 moment after the menu closes. Run `python anti_afk.py --show-menu` and open a few menus
 to check that it says `MENU` there and `playing` in a match.
 
-### Class selection and other screens you want clicked
+### Which menu is it? (rules.json)
 
-The bot can recognize screens you teach it. On the class selection screen, click **Learn screen...** in the
-app (or run `python anti_afk.py --learn class_select`) and follow the prompts in the log. Press F7 on the top-left and
-then the bottom-right corner of something that is only on that screen and doesn't change,
-like its title. Then press F7 on what it should click, such as your class. From then on it
-clicks that spot whenever it sees that screen. Every other menu, including the store, stays
-paused. `--show-menu` shows which screen it recognizes and how close the match is
-(`--match-threshold` makes matching looser or stricter). Learned screens are saved in
-`screens/`, so delete a file there to forget a screen. Positions are saved relative to the
-game window, so moving or resizing the window, or changing the resolution, is fine as
-long as the menu scales with it. Changing the aspect ratio (e.g. 16:9 to 21:9) usually
-moves menu items, so learn the screen again after that. Screens can't be read in
-exclusive fullscreen; use borderless or windowed mode.
+While a menu is open, the bot takes a screenshot of the game window about once a second
+and reads the text on it. `rules.json` says which screen has which words and what to click:
+
+```json
+{"name": "kicked",       "if_seen": ["KICKED FOR INACTIVITY"],  "click": "EXIT"},
+{"name": "main_menu",    "if_seen": ["QUICK PLAY", "FEATURED"], "click": "QUICK PLAY"},
+{"name": "searching",    "if_seen": ["SEARCHING FOR A MATCH"]},
+{"name": "class_select", "if_seen": ["SELECT CLASS"],           "click": "SELECT"}
+```
+
+A screen matches when all its `if_seen` words are on screen; the bot then clicks the text
+in `click` (wherever it is), or just waits if there is no `click`. It never clicks while any
+word in `never_click_if_seen` (STORE, PURCHASE, BUY, COD POINTS...) is visible, and a menu
+that matches no rule gets no input at all. Because it reads words instead of pixel
+positions, it works at any resolution or window size.
+
+To add a screen, open it in the game and click **Read screen** in the app (or run
+`python anti_afk.py --read-screen`). After 3 seconds it prints the text it sees and which
+rule matches. Pick a few words that are only on that screen, add a rule with **Edit**, and
+check it with a **Test run**. The screen has to be readable, so use borderless or windowed
+mode, not exclusive fullscreen. The first read takes a few seconds while the text
+recognition model loads.
 
 ### Games that draw their own menu cursor
 

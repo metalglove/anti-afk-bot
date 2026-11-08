@@ -2,3 +2,4 @@ pynput
 pydirectinput
 Pillow
 customtkinter
+rapidocr_onnxruntime
