@@ -1434,8 +1434,8 @@ def main():
     parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
     parser.add_argument('--delay', type=int, default=5,
                         help="seconds to wait before sending input (default 5)")
-    parser.add_argument('--game', default='',
-                        help="game exe name (e.g. cod.exe) or part of its window title; "
+    parser.add_argument('--game', default='cod.exe',
+                        help="game exe name or part of its window title (default: cod.exe); "
                              "input only goes out while it is focused")
     parser.add_argument('--look-scale', type=float, default=LOOK_SCALE,
                         help=f"how far turns go (default {LOOK_SCALE})")

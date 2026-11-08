@@ -29,8 +29,8 @@ is recognized before letting it play. Settings are remembered between runs.
 Using automation in online games may break the game's terms of service and can get your
 account banned.
 
-Prefer the terminal? `python anti_afk.py --game cod.exe` does the same (`--help` for options,
-`--test` for test mode).
+Prefer the terminal? `python anti_afk.py` does the same. The game defaults to `cod.exe`
+(`--game` for another one, `--help` for options, `--test` for test mode).
 
 ## What the bot is doing
 
