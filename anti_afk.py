@@ -194,6 +194,20 @@ def _user32():
     return _user32_cache
 
 
+def window_client_rect(hwnd=None):
+    """(left, top, width, height) on screen of a window's client area (default: the
+    game window, else the focused window), or of the primary screen if unknown."""
+    from ctypes import byref, wintypes
+    u = _user32()
+    hwnd = hwnd or game_hwnd or u.GetForegroundWindow()
+    rect = wintypes.RECT()
+    origin = wintypes.POINT(0, 0)
+    if hwnd and u.GetClientRect(hwnd, byref(rect)) and u.ClientToScreen(hwnd, byref(origin)) \
+            and rect.right > 0 and rect.bottom > 0:
+        return origin.x, origin.y, rect.right, rect.bottom
+    return 0, 0, u.GetSystemMetrics(0), u.GetSystemMetrics(1)  # SM_CXSCREEN, SM_CYSCREEN
+
+
 def game_area():
     """Screen rectangle (left, top, right, bottom) of the game's client area, inset
     by EDGE_MARGIN, or None if unknown."""
@@ -331,15 +345,28 @@ def menu_reason():
 # --------------------------------------------------------------------------- #
 # Known screens (class selection etc.)
 # --------------------------------------------------------------------------- #
-# A learned screen is a crop of the screen (screens/NAME.png) plus where it was
-# taken (screens/NAME.json: {"box": [l, t, r, b], "click": [x, y] or null}).
-# The screen matches when that part of the screen looks like the crop again.
+# A learned screen is a crop of the game window (screens/NAME.png) plus where it
+# was taken (screens/NAME.json). Positions are stored as fractions of the game
+# window's client area ({"box": [l, t, r, b], "click": [x, y] or null, all 0-1}),
+# so the window can be moved or resized: the box is found at the same relative
+# spot and the crop is scaled to its current size before comparing.
 SCREENS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'screens')
 MATCH_THRESHOLD = 25     # max average color difference (0-255) for a screen to match
 SCREEN_CLICK_DELAY = (1.0, 2.5)   # seconds to "read" a screen before clicking it
 SCREEN_CLICK_COOLDOWN = 4.0       # seconds before clicking the same screen again
 
-screens = []  # [{'name', 'box', 'click', 'image'}]
+screens = []  # [{'name', 'box', 'click', 'image'}], box/click as window fractions
+
+
+def to_screen(fx, fy, rect=None):
+    """Window fraction -> screen pixel."""
+    left, top, width, height = rect or window_client_rect()
+    return round(left + fx * width), round(top + fy * height)
+
+
+def to_fraction(x, y, rect):
+    left, top, width, height = rect
+    return (x - left) / width, (y - top) / height
 
 
 def grab(box):
@@ -354,10 +381,20 @@ def grab(box):
 def screen_difference(screen):
     """Average color difference (0-255) between the screen now and a learned screen."""
     from PIL import ImageChops, ImageStat
-    now = grab(screen['box'])
-    if now is None or now.size != screen['image'].size:
+    from PIL import Image
+    rect = window_client_rect()
+    l, t, r, b = screen['box']
+    left, top = to_screen(l, t, rect)
+    right, bottom = to_screen(r, b, rect)
+    if right - left < 4 or bottom - top < 4:
         return 255.0
-    diff = ImageStat.Stat(ImageChops.difference(now, screen['image'])).mean
+    now = grab((left, top, right, bottom))
+    if now is None:
+        return 255.0
+    saved = screen['image']
+    if saved.size != now.size:
+        saved = saved.resize(now.size, Image.BILINEAR)
+    diff = ImageStat.Stat(ImageChops.difference(now, saved)).mean
     return sum(diff) / len(diff)
 
 
@@ -407,6 +444,7 @@ def learn_screen(name):
     os.makedirs(SCREENS_DIR, exist_ok=True)
     json_path = os.path.join(SCREENS_DIR, name + '.json')
     points = []
+    state = {}  # 'rect': the game window's client area when the box was taken
     done = threading.Event()
 
     print(f"Learning screen '{name}'. Open that screen in the game, then:\n"
@@ -425,6 +463,7 @@ def learn_screen(name):
         point = cursor_pos()
         points.append((point.x, point.y))
         if len(points) == 1:
+            state['rect'] = window_client_rect(_user32().GetForegroundWindow())
             print(f"Top-left: {point.x},{point.y}")
         elif len(points) == 2:
             (x1, y1), (x2, y2) = points
@@ -438,14 +477,21 @@ def learn_screen(name):
                 print("Couldn't read the screen. Use borderless or windowed mode.")
                 points.clear()
                 return None
+            rect = state['rect']
+            rel_box = [*to_fraction(box[0], box[1], rect), *to_fraction(box[2], box[3], rect)]
+            if not all(0 <= v <= 1 for v in rel_box):
+                print("That box isn't inside the game window; start again.")
+                points.clear()
+                return None
             image.save(os.path.join(SCREENS_DIR, name + '.png'))
             with open(json_path, 'w') as f:
-                json.dump({'box': box, 'click': None}, f)
-            print(f"Saved box {box}. Press F7 on a spot to click, or F9 to finish.")
+                json.dump({'box': rel_box, 'click': None, 'window': list(rect[2:])}, f)
+            print(f"Saved box {box} (game window {rect[2]}x{rect[3]}). "
+                  "Press F7 on a spot to click, or F9 to finish.")
         elif len(points) == 3:
             with open(json_path) as f:
                 info = json.load(f)
-            info['click'] = [point.x, point.y]
+            info['click'] = list(to_fraction(point.x, point.y, state['rect']))
             with open(json_path, 'w') as f:
                 json.dump(info, f)
             print(f"The bot will click {point.x},{point.y} on this screen. Done.")
@@ -473,7 +519,7 @@ def click_screen(screen):
     current, _ = matching_screen()
     if current is not screen:
         return  # the screen changed while we waited
-    x, y = screen['click']
+    x, y = to_screen(*screen['click'])
     inputs.click_at(x, y)
     print(f"Clicked {x},{y} on screen '{screen['name']}'.")
 
@@ -1193,7 +1239,11 @@ def main():
         return
     screens = load_screens()
     for screen in screens:
-        action = f"click {screen['click'][0]},{screen['click'][1]}" if screen['click'] else "stay paused"
+        if screen['click']:
+            cx, cy = screen['click']
+            action = f"click at {cx:.0%} across, {cy:.0%} down the game window"
+        else:
+            action = "stay paused"
         print(f"Known screen '{screen['name']}': {action}.")
     if args.show_menu:
         show_menu()

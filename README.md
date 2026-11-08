@@ -39,8 +39,11 @@ like its title. Then press F7 on what it should click, such as your class. From 
 clicks that spot whenever it sees that screen. Every other menu, including the store, stays
 paused. `--show-menu` shows which screen it recognizes and how close the match is
 (`--match-threshold` makes matching looser or stricter). Learned screens are saved in
-`screens/`, so delete a file there to forget a screen. This only works at the same
-resolution it was learned at, and not in exclusive fullscreen.
+`screens/`, so delete a file there to forget a screen. Positions are saved relative to the
+game window, so moving or resizing the window, or changing the resolution, is fine as
+long as the menu scales with it. Changing the aspect ratio (e.g. 16:9 to 21:9) usually
+moves menu items, so learn the screen again after that. Screens can't be read in
+exclusive fullscreen; use borderless or windowed mode.
 
 ### Games that draw their own menu cursor
 
