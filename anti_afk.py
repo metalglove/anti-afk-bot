@@ -344,15 +344,16 @@ def menu_reason():
 # --------------------------------------------------------------------------- #
 # Reading the screen (which menu is open?)
 # --------------------------------------------------------------------------- #
-# While a menu is open, a background thread screenshots the game window about
-# once a second and reads the text on it (OCR). rules.json then says what each
+# While a menu is open, a background thread screenshots the game window and reads
+# the text on it (OCR): right when the menu opens, right after each click, and
+# every READ_INTERVAL seconds in between. Nothing is read during a match. rules.json then says what each
 # screen is and what to click, by the words on it, e.g.
 #   {"name": "kicked", "if_seen": ["KICKED FOR INACTIVITY"], "click": "EXIT"}
 # Nothing is clicked while any "never_click_if_seen" word (STORE, PURCHASE...)
 # is on screen. No per-resolution setup: the words are found wherever they are.
 RULES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rules.json')
-READ_INTERVAL = 1.0               # seconds between screen reads while a menu is open
-READ_MAX_AGE = 3.0                # a read older than this is not trusted
+READ_INTERVAL = 3.0               # seconds between screen reads while a menu stays open
+READ_AFTER_CLICK = 0.8            # seconds after a click before reading the new screen
 SCREEN_CLICK_DELAY = (1.0, 2.5)   # seconds to "read" a screen before clicking it
 SCREEN_CLICK_COOLDOWN = 4.0       # seconds before clicking the same screen again
 OCR_MIN_CONFIDENCE = 0.5
@@ -462,11 +463,20 @@ class ScreenReader:
         self.latest = None
         self.lock = threading.Lock()
         self.wanted = threading.Event()  # set while the state machine wants reads
+        self.soon = threading.Event()    # set to read now instead of after the interval
+
+    def read_soon(self):
+        self.soon.set()
+
+    @staticmethod
+    def max_age():
+        """A read older than this is not trusted."""
+        return READ_INTERVAL + 2.0
 
     def run(self):
         warned = False
         while not stop_event.is_set():
-            if not self.wanted.wait(0.2):
+            if not self.wanted.wait(0.2):  # a menu just opened: the next pass reads at once
                 with self.lock:
                     self.latest = None
                 continue
@@ -482,12 +492,17 @@ class ScreenReader:
                 warned = True
             with self.lock:
                 self.latest = read
-            stop_event.wait(READ_INTERVAL)
+            # Wait for the interval, or less if someone asks for a read (e.g. after a click).
+            deadline = time.monotonic() + READ_INTERVAL
+            while not stop_event.is_set() and self.wanted.is_set() and time.monotonic() < deadline:
+                if self.soon.wait(0.1):
+                    self.soon.clear()
+                    break
 
     def fresh(self, newer_than=0.0):
         with self.lock:
             read = self.latest
-        if read and read['time'] > newer_than and time.monotonic() - read['time'] <= READ_MAX_AGE:
+        if read and read['time'] > newer_than and time.monotonic() - read['time'] <= self.max_age():
             return read
         return None
 
@@ -501,8 +516,9 @@ def click_screen(screen, seen_at):
         return
     if not (running.is_set() and focused.is_set()):
         return
+    reader.read_soon()  # confirm with a new read that the screen is still there
     read = None
-    deadline = time.monotonic() + READ_INTERVAL + READ_MAX_AGE
+    deadline = time.monotonic() + reader.max_age()
     while read is None and time.monotonic() < deadline:  # wait for a read taken after the pause
         read = reader.fresh(newer_than=seen_at)
         if read is None and not wait(0.1):
@@ -522,6 +538,8 @@ def click_screen(screen, seen_at):
         return
     inputs.click_at(x, y)
     print(f"Clicked '{screen['click']}' at {x},{y} on screen '{screen['name']}'.")
+    if wait(READ_AFTER_CLICK):
+        reader.read_soon()  # see what the click led to without waiting the full interval
 
 
 # --------------------------------------------------------------------------- #
@@ -1238,7 +1256,7 @@ def stop():
 
 
 def main():
-    global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE
+    global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE, READ_INTERVAL
     parser = argparse.ArgumentParser(description="Anti-AFK input bot. Run app.py for the window version.")
     parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
     parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
@@ -1265,6 +1283,10 @@ def main():
                         help="just print what menu detection sees (cursor, pixel, known screen)")
     parser.add_argument('--test', action='store_true',
                         help="run the state machine without sending any input")
+    parser.add_argument('--read-interval', type=float, default=READ_INTERVAL,
+                        help=f"seconds between screen reads while a menu stays open "
+                             f"(default {READ_INTERVAL:g}; it also reads when a menu opens "
+                             f"and after each click)")
     parser.add_argument('--read-screen', action='store_true',
                         help="after 3s, read the game window once and print its text and "
                              "which rule matches, to help write rules.json")
@@ -1272,6 +1294,7 @@ def main():
 
     LOOK_SCALE, MAX_STILL = args.look_scale, args.max_still
     MENU_CHECK, PIXEL_TOLERANCE = not args.no_menu_check, args.pixel_tolerance
+    READ_INTERVAL = max(0.5, args.read_interval)
     if args.ingame_pixel:
         try:
             x, y, color = parse_pixel(args.ingame_pixel, need_color=not args.show_menu)

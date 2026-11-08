@@ -17,7 +17,8 @@ import anti_afk as bot
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(HERE, 'settings.json')
-DEFAULTS = {'game': '', 'autojoin': False, 'anti_kick': False, 'delay': 5}
+DEFAULTS = {'game': '', 'autojoin': False, 'anti_kick': False, 'delay': 5,
+            'read_interval': bot.READ_INTERVAL}
 
 # Colors (dark theme).
 BG = '#0f1115'
@@ -90,6 +91,7 @@ class App:
         self.autojoin = tk.BooleanVar(value=settings['autojoin'])
         self.anti_kick = tk.BooleanVar(value=settings['anti_kick'])
         self.delay = tk.StringVar(value=str(settings['delay']))
+        self.read_interval = tk.StringVar(value=f"{settings['read_interval']:g}")
 
         root.title("Anti-AFK")
         root.geometry('640x820')
@@ -183,6 +185,7 @@ class App:
             entry.grid(row=row, column=1, sticky='e', padx=16, pady=3)
             return entry
         number_row(2, "Start delay (s)", self.delay)
+        number_row(3, "Menu read interval (s)", self.read_interval)
         ctk.CTkSwitch(settings, text="Autojoin (F5, also in menus)", variable=self.autojoin,
                       progress_color=ACCENT).grid(row=4, column=0, columnspan=2, sticky='w', padx=16, pady=(8, 3))
         ctk.CTkSwitch(settings, text="Anti-kick (L every 20s)", variable=self.anti_kick,
@@ -229,7 +232,8 @@ class App:
     def save_settings(self):
         data = {'game': self.game.get().strip(),
                 'autojoin': self.autojoin.get(), 'anti_kick': self.anti_kick.get(),
-                'delay': max(0, self.number(self.delay, 5, int))}
+                'delay': max(0, self.number(self.delay, 5, int)),
+                'read_interval': max(0.5, self.number(self.read_interval, 3.0))}
         try:
             with open(SETTINGS_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
@@ -239,6 +243,7 @@ class App:
 
     def start(self, dry_run=False):
         data = self.save_settings()
+        bot.READ_INTERVAL = data['read_interval']
         if not data['game']:
             print("Tip: set the game (Detect) so the bot only acts while it is in front.")
         threading.Thread(target=bot.start, daemon=True, kwargs=dict(

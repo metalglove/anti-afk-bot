@@ -64,8 +64,10 @@ to check that it says `MENU` there and `playing` in a match.
 
 ### Which menu is it? (rules.json)
 
-While a menu is open, the bot takes a screenshot of the game window about once a second
-and reads the text on it. `rules.json` says which screen has which words and what to click:
+While a menu is open, the bot takes a screenshot of the game window and reads the text on
+it: as soon as the menu opens, right after each click, and every 3 seconds in between
+(**Menu read interval** in the app, `--read-interval` on the command line). During a match
+it reads nothing. `rules.json` says which screen has which words and what to click:
 
 ```json
 {"name": "kicked",       "if_seen": ["KICKED FOR INACTIVITY"],  "click": "EXIT"},
