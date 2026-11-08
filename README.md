@@ -4,9 +4,16 @@ Keeps you from getting kicked for inactivity while you're away from the game.
 
 ## Setup
 
+Needs **Python 3.11 to 3.14** on Windows. Newer Python versions don't work yet: the text
+recognition package (onnxruntime) has no build for them, so `pip install` fails with
+"conflicting dependencies". Install a supported version from python.org, then:
+
 ```
 pip install -r requirements.txt
 ```
+
+With several Python versions installed, pick one with the `py` launcher, e.g.
+`py -3.13 -m pip install -r requirements.txt` and `py -3.13 app.py`.
 
 ## Run
 
