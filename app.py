@@ -296,7 +296,6 @@ class App:
         # Plain tk frame: an empty CTkFrame falls back to 200x200 when no warning shows.
         self.warnings = tk.Frame(header, bg=BG)
         self.warnings.grid(row=0, column=2, sticky='e')
-        self.admin_chip = chip(self.warnings, "⚠ Not admin: only a problem if the game runs as admin", '#422006', '#fcd34d')
         self.game_chip = chip(self.warnings, "⚠ No game set (Settings)", '#422006', '#fcd34d')
         self.game_chip.bind('<Button-1>', lambda e: self.tabs.set("Settings"))
         tk.Frame(root, bg=CARD_BORDER, height=1).grid(row=0, column=0, sticky='swe')
@@ -560,6 +559,12 @@ class App:
                 number(self.read_interval))
         setting("Autojoin", "Press F5 every 2 seconds, also in menus.", switch(self.autojoin))
         setting("Anti-kick key", "Press L every 20 seconds while playing.", switch(self.anti_kick))
+        admin = bot.is_admin()
+        setting("Administrator", "Only needed if the game itself runs as administrator: Windows doesn't "
+                                 "let a normal program send input to it. Then start the terminal as "
+                                 "administrator and run python app.py from there.",
+                lambda parent: chip(parent, "Running as admin" if admin else "Not running as admin",
+                                    '#14361f' if admin else NEUTRAL, GOOD if admin else MUTED))
 
     # -- actions -----------------------------------------------------------------
     @staticmethod
@@ -779,10 +784,6 @@ class App:
         self.update_stats(running)
 
         # Warnings in the header.
-        if bot.is_admin():
-            self.admin_chip.pack_forget()
-        else:
-            self.admin_chip.pack(side='left', padx=4)
         if self.game.get().strip():
             self.game_chip.pack_forget()
         else:

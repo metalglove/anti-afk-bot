@@ -1373,9 +1373,6 @@ def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False
     if anti_kick_on and not dry_run:
         tasks.append(anti_kick)
 
-    if not is_admin():
-        print("Warning: not running as administrator. If the game runs as admin, it will ignore\n"
-              "         this input and F8/F9 won't work while it's focused.")
     if game:
         focused.clear()  # wait for the game before sending anything
         _spawn(watch_focus, game)
@@ -1480,6 +1477,9 @@ def main():
     listener = Listener(on_press=on_hotkey)
     listener.start()
     try:
+        if not is_admin():
+            print("Warning: not running as administrator. If the game runs as admin, it will ignore\n"
+                  "         this input and F8/F9 won't work while it's focused.")
         start(args.game, args.autojoin, args.anti_kick, args.delay, dry_run=args.test)
         while not stop_event.wait(0.5):
             pass
