@@ -110,7 +110,8 @@ class FlowDiagram:
              ('menu', 'resume')]
     SIDE = [(bot.STARTING, "Starting"), (bot.PAUSED, "Paused (F8)"),
             (bot.NOT_FOCUSED, "Not focused"), (bot.STOPPED, "Stopped (F9)")]
-    SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over'}
+    SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over',
+                   'report_victory': 'over', 'report_defeat': 'over', 'report': 'over'}
     NODE_W, NODE_H = 128, 50
 
     def __init__(self, parent):
