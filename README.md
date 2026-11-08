@@ -17,9 +17,12 @@ input to an elevated one, so then start the terminal as administrator too.
 1. The game is set to `cod.exe` by default. For another game, click **Detect** in Settings and then click on it, or type its exe name.
 2. Click **Start** and switch to the game.
 
-The big bar at the top shows what the bot is doing right now. **Test (send nothing)** runs
-everything except the input, so you can walk through the menus and check that each screen
-is recognized before letting it play. Settings are remembered between runs.
+The app has four pages: **Dashboard** (what the bot is doing right now, a live state
+diagram, stats and the activity log), **History** (every recorded match), **Screens** (the
+known screens from `rules.json`, and **Read screen** to check one) and **Settings** (game,
+start delay, menu read interval, and whether it runs as administrator). **Test run** does
+everything except sending input, so you can walk through the menus and check that each
+screen is recognized before letting it play. Settings are remembered between runs.
 
 | Key | Action |
 | --- | --- |
@@ -51,17 +54,20 @@ flowchart TD
     start(["STARTING · countdown"]) --> play
     play(["PLAYING<br/>move, look, shoot"])
 
-    play -- "VICTORY / DEFEAT on screen" --> over["victory / defeat<br/><b>pause input</b>"]
+    play -- "VICTORY / DEFEAT on screen" --> over["match over<br/>banner, best play<br/><b>pause input</b>"]
+    over --> report["after action report<br/><b>press ESC</b>"]
+    report --> search
+    play -- "ESC menu" --> pause["in-game menu<br/><b>press ESC</b>"]
     play -- "kicked for inactivity" --> kicked["kicked<br/><b>click EXIT</b>"]
     play -- "cursor shows, no rule matches" --> unknown["unknown menu or store<br/><b>send nothing</b>"]
 
     kicked --> main["main_menu<br/><b>click QUICK PLAY</b>"]
     main --> search["searching<br/><b>wait</b>"]
     search --> lobby["lobby / map voting<br/><b>wait</b>"]
-    over --> lobby
     lobby -- "match loads" --> cls["class_select<br/><b>press SPACE</b>"]
 
     cls -- "cursor hidden" --> resume(["RESUMING<br/>wait 1.5s"])
+    pause -- "cursor hidden" --> resume
     unknown -- "cursor hidden" --> resume
     resume --> play
 
@@ -78,7 +84,7 @@ flowchart TD
     classDef danger fill:#ffedd5,stroke:#ea580c,color:#7c2d12
     classDef side fill:#fafafa,stroke:#a1a1aa,color:#3f3f46
     class play,resume playing
-    class kicked,main,cls clicks
+    class kicked,main,cls,report,pause clicks
     class search,lobby,over,start waits
     class unknown danger
     class paused,nf,stopped side
@@ -92,7 +98,7 @@ flowchart TD
 | NOT FOCUSED | The game isn't the window in front |
 | PLAYING | In a match: the only state where it moves, shoots and presses keys |
 | RESUMING | A menu just closed; it waits a moment before playing |
-| SCREEN | A screen listed in `rules.json` (see below); it clicks that screen's button |
+| SCREEN | A screen listed in `rules.json` (see below); it clicks that screen's button, presses its key, or waits. Also `post_match`: input stays paused from VICTORY / DEFEAT until the next match |
 | MENU | A menu it doesn't know, or one showing STORE, PURCHASE etc.: it sends nothing |
 
 ## Match time
@@ -115,7 +121,8 @@ to check that it says `MENU` there and `playing` in a match.
 While a menu is open, the bot takes a screenshot of the game window and reads the text on
 it: as soon as the menu opens, right after each click, and every 3 seconds in between
 (**Menu read interval** in the app, `--read-interval` on the command line). During a match
-it reads nothing. `rules.json` says which screen has which words and what to click:
+it only reads every 5 seconds to spot the end of the match (see below). `rules.json` says
+which screen has which words and what to do there:
 
 ```json
 {"name": "kicked",       "if_seen": ["KICKED FOR INACTIVITY"],  "click": "EXIT"},
@@ -127,7 +134,7 @@ it reads nothing. `rules.json` says which screen has which words and what to cli
 ```
 
 A screen matches when all its `if_seen` words are on screen; the bot then clicks the text
-in `click` (wherever it is), or just waits if there is no `click`. It never clicks while any
+in `click` (wherever it is), presses the key in `press`, or just waits if it has neither. It never clicks while any
 word in `never_click_if_seen` (STORE, PURCHASE, BUY, COD POINTS...) is visible, and a menu
 that matches no rule gets no input at all. Because it reads words instead of pixel
 positions, it works at any resolution or window size.
@@ -152,8 +159,8 @@ The in-game menu (ESC during a match) is `pause_menu`: the bot presses ESC to go
 the match. It never clicks there, so LEAVE MATCH and QUIT TO DESKTOP are never touched.
 While you're tabbed out the game isn't in front, so the bot sends nothing at all.
 
-Instead of `click`, a rule can have `"press": "ESC"` (or another key) to press that key
-on the screen. It has the same safety checks as a click.
+A `press` has the same safety checks as a click: a fresh read must still show the same
+screen, with no `never_click_if_seen` word on it.
 
 To add a screen, open it in the game and click **Read screen** in the app (or run
 `python anti_afk.py --read-screen`). After 3 seconds it prints the text it sees and which
