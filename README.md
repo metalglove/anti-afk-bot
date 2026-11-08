@@ -122,6 +122,7 @@ it reads nothing. `rules.json` says which screen has which words and what to cli
 {"name": "searching",    "if_seen": ["SEARCHING FOR A MATCH"]},
 {"name": "main_menu",    "if_seen": ["QUICK PLAY", "FEATURED"], "click": "QUICK PLAY"},
 {"name": "report",       "if_seen": ["AFTER ACTION REPORT"],    "press": "ESC"},
+{"name": "pause_menu",   "if_seen": ["RETURN TO GAME", "LEAVE MATCH"], "press": "ESC"},
 {"name": "class_select", "if_seen": ["SELECT CLASS"],           "press": "SPACE"}
 ```
 
@@ -141,6 +142,10 @@ also shows "SEARCHING FOR A MATCH" in its corner, so its rules (`report_victory`
 `main_menu` so the bot never clicks QUICK PLAY while a search is running. The report
 records the match as a victory or defeat (in case the bot missed the banner), then the
 bot presses ESC to dismiss it.
+
+The in-game menu (ESC during a match) is `pause_menu`: the bot presses ESC to go back into
+the match. It never clicks there, so LEAVE MATCH and QUIT TO DESKTOP are never touched.
+While you're tabbed out the game isn't in front, so the bot sends nothing at all.
 
 Instead of `click`, a rule can have `"press": "ESC"` (or another key) to press that key
 on the screen. It has the same safety checks as a click.
