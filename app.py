@@ -19,7 +19,7 @@ import anti_afk as bot
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(HERE, 'settings.json')
-DEFAULTS = {'game': '', 'autojoin': False, 'anti_kick': False, 'delay': 5,
+DEFAULTS = {'game': 'cod.exe', 'autojoin': False, 'anti_kick': False, 'delay': 5,
             'read_interval': bot.READ_INTERVAL}
 
 # Colors (dark theme).
@@ -69,7 +69,9 @@ class QueueWriter:
 def load_settings():
     try:
         with open(SETTINGS_FILE) as f:
-            return {**DEFAULTS, **json.load(f)}
+            settings = {**DEFAULTS, **json.load(f)}
+        settings['game'] = settings['game'] or DEFAULTS['game']  # an empty game means the default
+        return settings
     except (OSError, ValueError):
         return dict(DEFAULTS)
 
