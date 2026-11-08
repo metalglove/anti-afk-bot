@@ -20,7 +20,7 @@ import anti_afk as bot
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(HERE, 'settings.json')
-DEFAULTS = {'game': 'cod.exe', 'autojoin': False, 'anti_kick': False, 'delay': 5,
+DEFAULTS = {'game': 'cod.exe', 'delay': 5,
             'read_interval': bot.READ_INTERVAL}
 
 # Colors (dark theme).
@@ -259,11 +259,9 @@ class App:
 
         settings = load_settings()
         self.game = tk.StringVar(value=settings['game'])
-        self.autojoin = tk.BooleanVar(value=settings['autojoin'])
-        self.anti_kick = tk.BooleanVar(value=settings['anti_kick'])
         self.delay = tk.StringVar(value=str(settings['delay']))
         self.read_interval = tk.StringVar(value=f"{settings['read_interval']:g}")
-        for var in (self.game, self.autojoin, self.anti_kick, self.delay, self.read_interval):
+        for var in (self.game, self.delay, self.read_interval):
             var.trace_add('write', lambda *_: self.save_settings())  # settings save themselves
 
         root.title("Anti-AFK")
@@ -557,8 +555,6 @@ class App:
         setting("Menu read interval (seconds)", "How often the screen is read while a menu stays open. "
                                                 "It also reads right when a menu opens and after each click.",
                 number(self.read_interval))
-        setting("Autojoin", "Press F5 every 2 seconds, also in menus.", switch(self.autojoin))
-        setting("Anti-kick key", "Press L every 20 seconds while playing.", switch(self.anti_kick))
         admin = bot.is_admin()
         setting("Administrator", "Only needed if the game itself runs as administrator: Windows doesn't "
                                  "let a normal program send input to it. Then start the terminal as "
@@ -576,7 +572,6 @@ class App:
 
     def save_settings(self):
         data = {'game': self.game.get().strip(),
-                'autojoin': self.autojoin.get(), 'anti_kick': self.anti_kick.get(),
                 'delay': max(0, self.number(self.delay, 5, int)),
                 'read_interval': max(0.5, self.number(self.read_interval, 3.0))}
         try:
@@ -597,8 +592,7 @@ class App:
         bot.READ_INTERVAL = data['read_interval']
         self.tabs.set("Dashboard")
         threading.Thread(target=bot.start, daemon=True, kwargs=dict(
-            game=data['game'], autojoin_on=data['autojoin'],
-            anti_kick_on=data['anti_kick'], delay=data['delay'], dry_run=dry_run)).start()
+            game=data['game'], delay=data['delay'], dry_run=dry_run)).start()
 
     def stop(self):
         threading.Thread(target=bot.stop, daemon=True).start()

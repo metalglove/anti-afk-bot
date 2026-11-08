@@ -2,7 +2,7 @@
 
 Usage:
     python anti_afk.py [--game cod.exe] [--delay N]
-                       [--autojoin] [--anti-kick] [--show-focus]
+                       [--show-focus]
                        [--ingame-pixel X,Y,RRGGBB] [--no-menu-check] [--show-menu]
                        [--read-screen]
 
@@ -1275,24 +1275,6 @@ HUMAN_MODE = [human_player]
 
 
 # --------------------------------------------------------------------------- #
-# Optional extras
-# --------------------------------------------------------------------------- #
-def autojoin():
-    """Press F5 every 2 seconds. Keeps going in menus, since joining happens there."""
-    while wait_until_active(menu_ok=True):
-        tap(Key.f5, menu_ok=True)
-        print("Pressing F5")
-        wait(2)
-
-
-def anti_kick():
-    """Press 'l' every 20 seconds."""
-    while wait_until_active():
-        tap('l')
-        wait(20)
-
-
-# --------------------------------------------------------------------------- #
 # Main
 # --------------------------------------------------------------------------- #
 def run_task(task):
@@ -1348,7 +1330,7 @@ def is_started():
     return any(t.is_alive() for t in _threads)
 
 
-def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False):
+def start(game='', delay=5, dry_run=False):
     """Start a session in background threads and return right away.
     dry_run: only detect and report states and clicks; send no input at all."""
     global DRY_RUN, rules, game_hwnd
@@ -1368,10 +1350,6 @@ def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False
     match['start'] = None
     match['over_at'] = None
     tasks = [] if dry_run else list(HUMAN_MODE)
-    if autojoin_on and not dry_run:
-        tasks.append(autojoin)
-    if anti_kick_on and not dry_run:
-        tasks.append(anti_kick)
 
     if game:
         focused.clear()  # wait for the game before sending anything
@@ -1419,8 +1397,6 @@ def stop():
 def main():
     global LOOK_SCALE, MAX_STILL, MENU_CHECK, INGAME_PIXEL, PIXEL_TOLERANCE, READ_INTERVAL
     parser = argparse.ArgumentParser(description="Anti-AFK input bot. Run app.py for the window version.")
-    parser.add_argument('--autojoin', action='store_true', help="press F5 every 2s")
-    parser.add_argument('--anti-kick', action='store_true', help="press 'l' every 20s")
     parser.add_argument('--delay', type=int, default=5,
                         help="seconds to wait before sending input (default 5)")
     parser.add_argument('--game', default='cod.exe',
@@ -1480,7 +1456,7 @@ def main():
         if not is_admin():
             print("Warning: not running as administrator. If the game runs as admin, it will ignore\n"
                   "         this input and F8/F9 won't work while it's focused.")
-        start(args.game, args.autojoin, args.anti_kick, args.delay, dry_run=args.test)
+        start(args.game, args.delay, dry_run=args.test)
         while not stop_event.wait(0.5):
             pass
     except KeyboardInterrupt:
