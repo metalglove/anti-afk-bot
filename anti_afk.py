@@ -559,9 +559,11 @@ def click_screen(screen, seen_at):
         return
     x, y = pos
     if DRY_RUN:
+        stats['clicks'] += 1
         print(f"Test: would click '{screen['click']}' at {x},{y} on screen '{screen['name']}'.")
         return
     inputs.click_at(x, y)
+    stats['clicks'] += 1
     print(f"Clicked '{screen['click']}' at {x},{y} on screen '{screen['name']}'.")
     if wait(READ_AFTER_CLICK):
         reader.read_soon()  # see what the click led to without waiting the full interval
@@ -585,6 +587,8 @@ STARTING, PAUSED, NOT_FOCUSED, PLAYING, RESUMING, SCREEN, MENU, STOPPED = (
     'STARTING', 'PAUSED', 'NOT FOCUSED', 'PLAYING', 'RESUMING', 'SCREEN', 'MENU', 'STOPPED')
 DRY_RUN = False  # test mode: detect states and report clicks, but send nothing
 UNKNOWN_MENU_REMINDER = 300  # seconds in an unknown menu before suggesting a rule
+
+stats = {'started': None, 'clicks': 0, 'matches': 0, 'kicks': 0, 'playing': 0.0}
 
 state_lock = threading.Lock()
 state = {'name': STOPPED, 'detail': '', 'since': time.monotonic()}
@@ -651,6 +655,14 @@ def enter_state(name, detail=''):
         state.update(name=name, detail=detail)
         if not same_name:
             state['since'] = time.monotonic()
+            if previous == PLAYING:
+                stats['playing'] += lasted
+        if name == SCREEN:
+            screen = detail.split(' (')[0]
+            if screen in ('victory', 'defeat'):
+                stats['matches'] += 1
+            elif screen == 'kicked':
+                stats['kicks'] += 1
     if name == PLAYING:
         no_menu.set()
     elif no_menu.is_set():
@@ -1207,6 +1219,8 @@ def _spawn(target, *args):
 
 
 def describe_rules():
+    global rules
+    rules = load_rules()
     for screen in rules['screens']:
         action = f"click '{screen['click']}'" if screen['click'] else "wait"
         print(f"Screen '{screen['name']}' (shows {' + '.join(screen['if_seen'])}): {action}.")
@@ -1234,7 +1248,8 @@ def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False
     DRY_RUN = dry_run
 
     rules = load_rules()
-    describe_rules()
+    print(f"{len(rules['screens'])} known screens loaded from {os.path.basename(RULES_FILE)}.")
+    stats.update(started=time.monotonic(), clicks=0, matches=0, kicks=0, playing=0.0)
     tasks = [] if dry_run else list(HUMAN_MODE)
     if autojoin_on and not dry_run:
         tasks.append(autojoin)
@@ -1343,6 +1358,7 @@ def main():
         show_menu()
         return
 
+    describe_rules()
     listener = Listener(on_press=on_hotkey)
     listener.start()
     try:

@@ -1,14 +1,16 @@
 """Anti-AFK bot: window version.
 
 Start it with AntiAFK.bat (asks for administrator rights), or `python app.py`.
-Same engine as anti_afk.py; this adds a window with the live state, buttons,
-known screens and a log. Settings are remembered in settings.json.
+Same engine as anti_afk.py; this adds a window with the live state, a state
+diagram, session stats, the known screens and settings. Settings are remembered
+in settings.json.
 """
 import json
 import os
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 
 import customtkinter as ctk
@@ -30,16 +32,20 @@ ACCENT = '#3b82f6'
 ACCENT_HOVER = '#2563eb'
 DANGER = '#ef4444'
 DANGER_HOVER = '#dc2626'
+WARN = '#f59e0b'
+GOOD = '#22c55e'
+NEUTRAL = '#27272a'
+NEUTRAL_HOVER = '#3f3f46'
 
-STATE_STYLE = {  # dot color, short explanation
-    bot.PLAYING: ('#22c55e', "In a match: moving, looking and shooting"),
-    bot.RESUMING: ('#86efac', "Menu closed, about to play"),
-    bot.SCREEN: ('#3b82f6', "Known screen"),
-    bot.MENU: ('#f59e0b', "Unknown menu: sending nothing"),
-    bot.PAUSED: ('#a1a1aa', "Paused"),
-    bot.NOT_FOCUSED: ('#a1a1aa', "Waiting for the game window"),
+STATE_STYLE = {  # color, short explanation
+    bot.PLAYING: (GOOD, "In a match: moving, looking and shooting"),
+    bot.RESUMING: ('#16a34a', "Menu closed, about to play"),
+    bot.SCREEN: (ACCENT, "Known screen"),
+    bot.MENU: (WARN, "Unknown menu: sending nothing"),
+    bot.PAUSED: ('#71717a', "Paused. Press F8 or Resume to continue"),
+    bot.NOT_FOCUSED: ('#71717a', "Waiting for the game window to be in front"),
     bot.STARTING: ('#eab308', "Starting"),
-    bot.STOPPED: ('#52525b', "Not running"),
+    bot.STOPPED: ('#52525b', "Press Start, or Test run to try it without sending input"),
 }
 
 FONT = 'Segoe UI'
@@ -47,7 +53,7 @@ MONO = 'Consolas'
 
 
 class QueueWriter:
-    """Sends print() output from every thread to the log box."""
+    """Sends print() output from every thread to the activity log."""
 
     def __init__(self, q):
         self.q = q
@@ -78,6 +84,11 @@ def heading(parent, text):
                         font=ctk.CTkFont(FONT, 11, 'bold'))
 
 
+def chip(parent, text, color, text_color=TEXT):
+    return ctk.CTkLabel(parent, text=f"  {text}  ", fg_color=color, corner_radius=8,
+                        text_color=text_color, font=ctk.CTkFont(FONT, 11, 'bold'), height=24)
+
+
 class FlowDiagram:
     """The bot's state machine drawn as a diagram; the current state lights up."""
 
@@ -103,7 +114,7 @@ class FlowDiagram:
     NODE_W, NODE_H = 128, 50
 
     def __init__(self, parent):
-        self.canvas = tk.Canvas(parent, bg=CARD, highlightthickness=0, height=self.H)
+        self.canvas = tk.Canvas(parent, bg=CARD, highlightthickness=0, height=200)
         self.canvas.bind('<Configure>', lambda e: self.draw())
         self.active, self.color, self.other = None, ACCENT, ''
 
@@ -133,14 +144,14 @@ class FlowDiagram:
     def draw(self):
         c = self.canvas
         c.delete('all')
-        width = max(c.winfo_width(), 200)
-        k = width / self.W
-        c.configure(height=int(self.H * k))
+        width, height = max(c.winfo_width(), 200), max(c.winfo_height(), 120)
+        k = min(width / self.W, height / self.H)  # fit both ways, centered
+        ox, oy = (width - self.W * k) / 2, (height - self.H * k) / 2
         w, h = self.NODE_W * k / 2, self.NODE_H * k / 2
 
         def center(key):
             x, y = self.NODES[key][:2]
-            return x * k, y * k
+            return ox + x * k, oy + y * k
 
         def border_point(key, toward):
             # Where the line from this node's center toward `toward` leaves the box.
@@ -160,18 +171,18 @@ class FlowDiagram:
         title_font = (FONT, max(8, int(11 * k)), 'bold')
         sub_font = (FONT, max(7, int(9 * k)))
         for key, (x, y, title, action) in self.NODES.items():
-            x, y = x * k, y * k
+            x, y = ox + x * k, oy + y * k
             lit = key == self.active
             self.rounded(c, x - w, y - h, x + w, y + h, 12 * k,
                          fill=self.color if lit else BG, outline=self.color if lit else CARD_BORDER,
                          width=2)
-            c.create_text(x, y - 8 * k, text=title, fill='#0b0d10' if lit else TEXT, font=title_font)
-            c.create_text(x, y + 10 * k, text=action, fill='#0b0d10' if lit else MUTED, font=sub_font)
+            c.create_text(x, y - 8 * k, text=title, fill='white' if lit else TEXT, font=title_font)
+            c.create_text(x, y + 10 * k, text=action, fill='white' if lit else MUTED, font=sub_font)
 
         # States that can happen at any time.
-        y = 305 * k
-        c.create_text(14 * k, y, text="Any time:", anchor='w', fill=MUTED, font=sub_font)
-        x = 80 * k
+        y = oy + 305 * k
+        c.create_text(ox + 14 * k, y, text="Any time:", anchor='w', fill=MUTED, font=sub_font)
+        x = ox + 80 * k
         side = list(self.SIDE)
         if self.other:
             side.append(('__other__', f"Screen: {self.other}"))
@@ -180,7 +191,7 @@ class FlowDiagram:
             tw = (len(label) * 6.6 + 22) * k
             self.rounded(c, x, y - 11 * k, x + tw, y + 11 * k, 10 * k,
                          fill=self.color if lit else BG, outline=self.color if lit else CARD_BORDER, width=1)
-            c.create_text(x + tw / 2, y, text=label, fill='#0b0d10' if lit else MUTED, font=sub_font)
+            c.create_text(x + tw / 2, y, text=label, fill='white' if lit else MUTED, font=sub_font)
             x += tw + 8 * k
 
 
@@ -190,6 +201,7 @@ class App:
         self.log_queue = queue.Queue()
         self.busy_reading = False
         self.stopping = False
+        self.last_log_state = None
         sys.stdout = sys.stderr = QueueWriter(self.log_queue)
 
         settings = load_settings()
@@ -198,149 +210,229 @@ class App:
         self.anti_kick = tk.BooleanVar(value=settings['anti_kick'])
         self.delay = tk.StringVar(value=str(settings['delay']))
         self.read_interval = tk.StringVar(value=f"{settings['read_interval']:g}")
+        for var in (self.game, self.autojoin, self.anti_kick, self.delay, self.read_interval):
+            var.trace_add('write', lambda *_: self.save_settings())  # settings save themselves
 
         root.title("Anti-AFK")
-        root.geometry('1280x760')
-        root.minsize(1100, 680)
+        root.geometry('1180x780')
+        root.minsize(1000, 680)
         root.configure(fg_color=BG)
         root.protocol('WM_DELETE_WINDOW', self.on_close)
-        root.bind('<FocusIn>', lambda e: self.refresh_screens() if e.widget is root else None)
         self.build()
 
         self.hotkeys = bot.Listener(on_press=bot.on_hotkey)
         self.hotkeys.start()
         self.refresh_screens()
-        if not bot.is_admin():
-            print("Not running as administrator: the game may ignore the bot. "
-                  "Start the app with AntiAFK.bat.")
         self.poll()
 
     # -- layout ----------------------------------------------------------------
     def build(self):
         root = self.root
-        root.grid_columnconfigure(1, weight=1)
-        root.grid_rowconfigure(0, weight=1)
-        left = ctk.CTkFrame(root, fg_color='transparent', width=600)
-        left.grid(row=0, column=0, sticky='ns')
-        right = ctk.CTkFrame(root, fg_color='transparent')
-        right.grid(row=0, column=1, sticky='nswe')
-        right.grid_columnconfigure(0, weight=1)
-        right.grid_rowconfigure(1, weight=1)
+        root.grid_columnconfigure(0, weight=1)
+        root.grid_rowconfigure(1, weight=1)
 
-        # Status card.
-        status = card(left)
-        status.grid(row=0, column=0, sticky='we', padx=16, pady=(16, 8))
+        # Header: name + warnings that need attention.
+        header = ctk.CTkFrame(root, fg_color='transparent')
+        header.grid(row=0, column=0, sticky='we', padx=20, pady=(14, 0))
+        header.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(header, text="Anti-AFK", text_color=TEXT,
+                     font=ctk.CTkFont(FONT, 20, 'bold')).grid(row=0, column=0, sticky='w')
+        self.warnings = ctk.CTkFrame(header, fg_color='transparent')
+        self.warnings.grid(row=0, column=1, sticky='e')
+        self.admin_chip = chip(self.warnings, "⚠ Not running as administrator", '#422006', '#fcd34d')
+        self.game_chip = chip(self.warnings, "⚠ No game set (Settings)", '#422006', '#fcd34d')
+        self.game_chip.bind('<Button-1>', lambda e: self.tabs.set("Settings"))
+
+        self.tabs = ctk.CTkTabview(root, fg_color='transparent', segmented_button_selected_color=ACCENT,
+                                   segmented_button_selected_hover_color=ACCENT_HOVER, anchor='nw')
+        self.tabs.grid(row=1, column=0, sticky='nswe', padx=12, pady=(0, 12))
+        for name in ("Dashboard", "Screens", "Settings"):
+            self.tabs.add(name)
+        try:  # roomier tab buttons
+            self.tabs._segmented_button.configure(font=ctk.CTkFont(FONT, 13, 'bold'), height=34)
+        except (AttributeError, ValueError):
+            pass
+        self.build_dashboard(self.tabs.tab("Dashboard"))
+        self.build_screens(self.tabs.tab("Screens"))
+        self.build_settings(self.tabs.tab("Settings"))
+
+    def build_dashboard(self, tab):
+        tab.grid_columnconfigure(0, weight=3, uniform='dash')
+        tab.grid_columnconfigure(1, weight=2, uniform='dash')
+        tab.grid_rowconfigure(2, weight=1)
+
+        # Status.
+        status = card(tab)
+        status.grid(row=0, column=0, sticky='nswe', padx=(0, 6), pady=(0, 8))
         status.grid_columnconfigure(1, weight=1)
         self.dot = ctk.CTkLabel(status, text='●', font=ctk.CTkFont(FONT, 34), width=40)
-        self.dot.grid(row=0, column=0, rowspan=2, padx=(18, 6), pady=16)
-        self.state_label = ctk.CTkLabel(status, text="STOPPED", text_color=TEXT, anchor='w',
+        self.dot.grid(row=0, column=0, rowspan=2, padx=(18, 6), pady=(16, 0))
+        self.state_label = ctk.CTkLabel(status, text="Stopped", text_color=TEXT, anchor='w',
                                         font=ctk.CTkFont(FONT, 26, 'bold'))
         self.state_label.grid(row=0, column=1, sticky='w', pady=(16, 0))
-        self.detail_label = ctk.CTkLabel(status, text="", text_color=MUTED, anchor='w',
-                                         font=ctk.CTkFont(FONT, 13))
-        self.detail_label.grid(row=1, column=1, sticky='w', pady=(0, 16))
-        self.timer_label = ctk.CTkLabel(status, text="", text_color=MUTED,
-                                        font=ctk.CTkFont(MONO, 15))
-        self.timer_label.grid(row=1, column=2, padx=18, sticky='e', pady=(0, 16))
-        self.test_badge = ctk.CTkLabel(status, text=" TEST MODE ", fg_color='#3f3f46',
-                                       corner_radius=8, text_color=TEXT,
-                                       font=ctk.CTkFont(FONT, 11, 'bold'))
+        self.timer_label = ctk.CTkLabel(status, text="", text_color=MUTED, font=ctk.CTkFont(MONO, 15))
+        self.timer_label.grid(row=0, column=2, padx=18, sticky='e', pady=(16, 0))
+        self.detail_label = ctk.CTkLabel(status, text="", text_color=MUTED, anchor='w', justify='left',
+                                         font=ctk.CTkFont(FONT, 13), wraplength=520)
+        self.detail_label.grid(row=1, column=1, columnspan=2, sticky='w', pady=(0, 6))
+        self.test_badge = chip(status, "TEST RUN · nothing is sent", NEUTRAL_HOVER)
 
-        # Controls.
-        controls = ctk.CTkFrame(left, fg_color='transparent')
-        controls.grid(row=1, column=0, sticky='we', padx=16, pady=4)
-        for i in range(4):
-            controls.grid_columnconfigure(i, weight=1, uniform='buttons')
-        big = ctk.CTkFont(FONT, 14, 'bold')
-        self.start_btn = ctk.CTkButton(controls, text="▶  Start", height=42, font=big,
-                                       corner_radius=10, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                                       command=self.start)
-        self.test_btn = ctk.CTkButton(controls, text="Test run", height=42, font=big,
-                                      corner_radius=10, fg_color='transparent', border_width=1,
-                                      border_color=CARD_BORDER, hover_color=CARD,
-                                      command=lambda: self.start(dry_run=True))
-        self.pause_btn = ctk.CTkButton(controls, text="❚❚  Pause", height=42, font=big,
-                                       corner_radius=10, fg_color='#27272a', hover_color='#3f3f46',
-                                       command=self.toggle_pause)
-        self.stop_btn = ctk.CTkButton(controls, text="■  Stop", height=42, font=big,
-                                      corner_radius=10, fg_color=DANGER, hover_color=DANGER_HOVER,
-                                      command=self.stop)
-        for i, b in enumerate((self.start_btn, self.test_btn, self.pause_btn, self.stop_btn)):
-            b.grid(row=0, column=i, sticky='we', padx=4)
-        ctk.CTkLabel(left, text="F8 pause / resume   ·   F9 stop   ·   Test run sends no input",
-                     text_color=MUTED, font=ctk.CTkFont(FONT, 11)).grid(row=2, column=0, pady=(0, 4))
+        controls = ctk.CTkFrame(status, fg_color='transparent')
+        controls.grid(row=3, column=0, columnspan=3, sticky='we', padx=14, pady=(6, 16))
+        controls.grid_columnconfigure(0, weight=2)
+        controls.grid_columnconfigure((1, 2), weight=1)
+        big = ctk.CTkFont(FONT, 15, 'bold')
+        self.main_btn = ctk.CTkButton(controls, text="▶  Start", height=46, font=big, corner_radius=10,
+                                      fg_color=ACCENT, hover_color=ACCENT_HOVER, command=self.start_or_stop)
+        self.main_btn.grid(row=0, column=0, sticky='we', padx=4)
+        self.pause_btn = ctk.CTkButton(controls, text="❚❚  Pause", height=46, font=big, corner_radius=10,
+                                       fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER, command=self.toggle_pause)
+        self.pause_btn.grid(row=0, column=1, sticky='we', padx=4)
+        self.test_btn = ctk.CTkButton(controls, text="Test run", height=46, font=big, corner_radius=10,
+                                      fg_color='transparent', border_width=1, border_color=CARD_BORDER,
+                                      hover_color=NEUTRAL, command=lambda: self.start(dry_run=True))
+        self.test_btn.grid(row=0, column=2, sticky='we', padx=4)
+        ctk.CTkLabel(status, text="Hotkeys in game:  F8 pause / resume   ·   F9 stop", text_color=MUTED,
+                     font=ctk.CTkFont(FONT, 11)).grid(row=4, column=0, columnspan=3, pady=(0, 12))
 
-        # Settings + known screens side by side.
-        middle = ctk.CTkFrame(left, fg_color='transparent')
-        middle.grid(row=3, column=0, sticky='nswe', padx=12, pady=(4, 16))
-        left.grid_rowconfigure(3, weight=1)
-        middle.grid_rowconfigure(0, weight=1)
-        middle.grid_columnconfigure((0, 1), weight=1, uniform='middle')
+        # Session stats.
+        stats = card(tab)
+        stats.grid(row=0, column=1, sticky='nswe', padx=(6, 0), pady=(0, 8))
+        stats.grid_columnconfigure((0, 1), weight=1)
+        heading(stats, "This session").grid(row=0, column=0, columnspan=2, sticky='w', padx=16, pady=(14, 4))
+        self.stat_values = {}
+        for i, (key, label) in enumerate([('running', "Running for"), ('playing', "Time in matches"),
+                                          ('matches', "Matches finished"), ('clicks', "Menu clicks"),
+                                          ('kicks', "AFK kicks")]):
+            box = ctk.CTkFrame(stats, fg_color=BG, corner_radius=10)
+            box.grid(row=1 + i // 2, column=i % 2, sticky='we', padx=(16 if i % 2 == 0 else 6, 16 if i % 2 else 6), pady=5)
+            value = ctk.CTkLabel(box, text="–", text_color=TEXT, font=ctk.CTkFont(FONT, 20, 'bold'), anchor='w')
+            value.pack(anchor='w', padx=12, pady=(8, 0))
+            ctk.CTkLabel(box, text=label, text_color=MUTED, font=ctk.CTkFont(FONT, 11), anchor='w').pack(
+                anchor='w', padx=12, pady=(0, 8))
+            self.stat_values[key] = value
 
-        settings = card(middle)
-        settings.grid(row=0, column=0, sticky='nswe', padx=4)
-        settings.grid_columnconfigure(0, weight=1)
-        heading(settings, "Settings").grid(row=0, column=0, columnspan=2, sticky='w', padx=16, pady=(14, 6))
-        game_row = ctk.CTkFrame(settings, fg_color='transparent')
-        game_row.grid(row=1, column=0, columnspan=2, sticky='we', padx=16, pady=4)
-        game_row.grid_columnconfigure(0, weight=1)
-        self.game_entry = ctk.CTkEntry(game_row, textvariable=self.game, height=34,
-                                       placeholder_text="game exe, e.g. cod.exe")
-        self.game_entry.grid(row=0, column=0, sticky='we')
-        self.detect_btn = ctk.CTkButton(game_row, text="Detect", width=70, height=34,
-                                        fg_color='#27272a', hover_color='#3f3f46',
-                                        command=self.detect_game)
-        self.detect_btn.grid(row=0, column=1, padx=(6, 0))
-
-        def number_row(row, label, var):
-            ctk.CTkLabel(settings, text=label, text_color=TEXT, anchor='w').grid(
-                row=row, column=0, sticky='w', padx=16, pady=3)
-            entry = ctk.CTkEntry(settings, textvariable=var, width=60, height=30, justify='center')
-            entry.grid(row=row, column=1, sticky='e', padx=16, pady=3)
-            return entry
-        number_row(2, "Start delay (s)", self.delay)
-        number_row(3, "Menu read interval (s)", self.read_interval)
-        ctk.CTkSwitch(settings, text="Autojoin (F5, also in menus)", variable=self.autojoin,
-                      progress_color=ACCENT).grid(row=4, column=0, columnspan=2, sticky='w', padx=16, pady=(8, 3))
-        ctk.CTkSwitch(settings, text="Anti-kick (L every 20s)", variable=self.anti_kick,
-                      progress_color=ACCENT).grid(row=5, column=0, columnspan=2, sticky='w', padx=16, pady=(3, 14))
-
-        screens = card(middle)
-        screens.grid(row=0, column=1, sticky='nswe', padx=4)
-        screens.grid_columnconfigure(0, weight=1)
-        screens.grid_rowconfigure(1, weight=1)
-        top = ctk.CTkFrame(screens, fg_color='transparent')
-        top.grid(row=0, column=0, sticky='we', padx=16, pady=(14, 6))
-        top.grid_columnconfigure(0, weight=1)
-        heading(top, "Known screens").grid(row=0, column=0, sticky='w')
-        self.read_btn = ctk.CTkButton(top, text="Read screen", width=96, height=28, corner_radius=8,
-                                      fg_color='#27272a', hover_color='#3f3f46',
-                                      command=self.read_screen)
-        self.read_btn.grid(row=0, column=1, padx=(0, 6))
-        self.edit_btn = ctk.CTkButton(top, text="Edit", width=54, height=28, corner_radius=8,
-                                      fg_color=ACCENT, hover_color=ACCENT_HOVER, command=self.edit_rules)
-        self.edit_btn.grid(row=0, column=2)
-        self.screen_list = ctk.CTkScrollableFrame(screens, fg_color='transparent', height=190)
-        self.screen_list.grid(row=1, column=0, sticky='nswe', padx=8, pady=(0, 10))
-        self.screen_list.grid_columnconfigure(0, weight=1)
-
-        # Log.
-        flow_card = card(right)
-        flow_card.grid(row=0, column=0, sticky='nswe', padx=(4, 16), pady=(16, 8))
+        # Diagram + activity.
+        flow_card = card(tab)
+        flow_card.grid(row=2, column=0, sticky='nswe', padx=(0, 6))
         flow_card.grid_columnconfigure(0, weight=1)
-        heading(flow_card, "State diagram").grid(row=0, column=0, sticky='w', padx=16, pady=(14, 0))
+        heading(flow_card, "What the bot is doing").grid(row=0, column=0, sticky='w', padx=16, pady=(14, 0))
         self.flow = FlowDiagram(flow_card)
-        self.flow.canvas.grid(row=1, column=0, sticky='we', padx=12, pady=(4, 12))
+        self.flow.canvas.grid(row=1, column=0, sticky='nswe', padx=12, pady=(4, 12))
+        flow_card.grid_rowconfigure(1, weight=1)
 
-        log_card = card(right)
-        log_card.grid(row=1, column=0, sticky='nswe', padx=(4, 16), pady=(8, 16))
+        log_card = card(tab)
+        log_card.grid(row=2, column=1, sticky='nswe', padx=(6, 0))
         log_card.grid_columnconfigure(0, weight=1)
         log_card.grid_rowconfigure(1, weight=1)
-        heading(log_card, "Activity").grid(row=0, column=0, sticky='w', padx=16, pady=(14, 4))
+        top = ctk.CTkFrame(log_card, fg_color='transparent')
+        top.grid(row=0, column=0, sticky='we', padx=16, pady=(10, 2))
+        top.grid_columnconfigure(0, weight=1)
+        heading(top, "Activity").grid(row=0, column=0, sticky='w')
+        ctk.CTkButton(top, text="Clear", width=56, height=24, corner_radius=6, fg_color=NEUTRAL,
+                      hover_color=NEUTRAL_HOVER, command=self.clear_log).grid(row=0, column=1)
         self.log = ctk.CTkTextbox(log_card, fg_color=BG, text_color='#c9ccd1', corner_radius=10,
                                   font=ctk.CTkFont(MONO, 12), wrap='word')
         self.log.grid(row=1, column=0, sticky='nswe', padx=12, pady=(0, 12))
+        for tag, color in (('state', TEXT), ('click', '#93c5fd'), ('warn', '#fcd34d'),
+                           ('playing', '#86efac'), ('muted', MUTED)):
+            self.log.tag_config(tag, foreground=color)
         self.log.configure(state='disabled')
+
+    def build_screens(self, tab):
+        tab.grid_columnconfigure(0, weight=3, uniform='screens')
+        tab.grid_columnconfigure(1, weight=2, uniform='screens')
+        tab.grid_rowconfigure(0, weight=1)
+
+        rules_card = card(tab)
+        rules_card.grid(row=0, column=0, sticky='nswe', padx=(0, 6))
+        rules_card.grid_columnconfigure(0, weight=1)
+        rules_card.grid_rowconfigure(2, weight=1)
+        top = ctk.CTkFrame(rules_card, fg_color='transparent')
+        top.grid(row=0, column=0, sticky='we', padx=16, pady=(14, 0))
+        top.grid_columnconfigure(0, weight=1)
+        heading(top, "Known screens").grid(row=0, column=0, sticky='w')
+        ctk.CTkButton(top, text="Reload", width=70, height=28, corner_radius=8, fg_color=NEUTRAL,
+                      hover_color=NEUTRAL_HOVER, command=self.refresh_screens).grid(row=0, column=1, padx=(0, 6))
+        ctk.CTkButton(top, text="Edit rules.json", width=120, height=28, corner_radius=8, fg_color=ACCENT,
+                      hover_color=ACCENT_HOVER, command=self.edit_rules).grid(row=0, column=2)
+        ctk.CTkLabel(rules_card, text="When a menu is open, the bot reads the text on screen. A screen "
+                                      "matches when all of its words are visible; the bot then clicks "
+                                      "its button, or waits.", text_color=MUTED, justify='left',
+                     anchor='w', wraplength=600, font=ctk.CTkFont(FONT, 12)).grid(
+            row=1, column=0, sticky='we', padx=16, pady=(4, 8))
+        self.screen_list = ctk.CTkScrollableFrame(rules_card, fg_color='transparent')
+        self.screen_list.grid(row=2, column=0, sticky='nswe', padx=8, pady=(0, 8))
+        self.screen_list.grid_columnconfigure(0, weight=1)
+        self.never_label = ctk.CTkLabel(rules_card, text="", text_color='#fca5a5', justify='left', anchor='w',
+                                        wraplength=600, font=ctk.CTkFont(FONT, 12))
+        self.never_label.grid(row=3, column=0, sticky='we', padx=16, pady=(0, 14))
+
+        read_card = card(tab)
+        read_card.grid(row=0, column=1, sticky='nswe', padx=(6, 0))
+        read_card.grid_columnconfigure(0, weight=1)
+        read_card.grid_rowconfigure(3, weight=1)
+        heading(read_card, "Check a screen").grid(row=0, column=0, sticky='w', padx=16, pady=(14, 0))
+        ctk.CTkLabel(read_card, text="Open a screen in the game and press Read. After 3 seconds the bot "
+                                     "reads the game window and shows what it sees and which rule matches.",
+                     text_color=MUTED, justify='left', anchor='w', wraplength=380,
+                     font=ctk.CTkFont(FONT, 12)).grid(row=1, column=0, sticky='we', padx=16, pady=(4, 8))
+        self.read_btn = ctk.CTkButton(read_card, text="Read screen in 3s", height=36, corner_radius=8,
+                                      fg_color=ACCENT, hover_color=ACCENT_HOVER, command=self.read_screen)
+        self.read_btn.grid(row=2, column=0, sticky='w', padx=16, pady=(0, 8))
+        self.read_result = ctk.CTkTextbox(read_card, fg_color=BG, text_color='#c9ccd1', corner_radius=10,
+                                          font=ctk.CTkFont(MONO, 12), wrap='word')
+        self.read_result.grid(row=3, column=0, sticky='nswe', padx=12, pady=(0, 12))
+        self.set_read_result("Nothing read yet.")
+
+    def build_settings(self, tab):
+        tab.grid_columnconfigure(0, weight=1)
+        box = card(tab)
+        box.grid(row=0, column=0, sticky='nwe')
+        box.grid_columnconfigure(0, weight=1)
+        heading(box, "Settings").grid(row=0, column=0, columnspan=2, sticky='w', padx=20, pady=(16, 4))
+        ctk.CTkLabel(box, text="Changes are saved right away and used the next time you press Start.",
+                     text_color=MUTED, font=ctk.CTkFont(FONT, 12)).grid(
+            row=1, column=0, columnspan=2, sticky='w', padx=20, pady=(0, 8))
+
+        row = 2
+
+        def setting(label, help_text, widget_factory):
+            nonlocal row
+            ctk.CTkLabel(box, text=label, text_color=TEXT, anchor='w',
+                         font=ctk.CTkFont(FONT, 14, 'bold')).grid(row=row, column=0, sticky='w', padx=20, pady=(12, 0))
+            ctk.CTkLabel(box, text=help_text, text_color=MUTED, anchor='w', justify='left', wraplength=640,
+                         font=ctk.CTkFont(FONT, 12)).grid(row=row + 1, column=0, sticky='w', padx=20, pady=(0, 12))
+            widget = widget_factory(box)
+            widget.grid(row=row, column=1, rowspan=2, sticky='e', padx=20)
+            ctk.CTkFrame(box, fg_color=CARD_BORDER, height=1).grid(row=row + 2, column=0, columnspan=2,
+                                                                    sticky='we', padx=20)
+            row += 3
+            return widget
+
+        def game_widget(parent):
+            frame = ctk.CTkFrame(parent, fg_color='transparent')
+            ctk.CTkEntry(frame, textvariable=self.game, width=220, height=34,
+                         placeholder_text="e.g. cod.exe").pack(side='left')
+            self.detect_btn = ctk.CTkButton(frame, text="Detect", width=80, height=34, fg_color=NEUTRAL,
+                                            hover_color=NEUTRAL_HOVER, command=self.detect_game)
+            self.detect_btn.pack(side='left', padx=(8, 0))
+            return frame
+
+        def number(var):
+            return lambda parent: ctk.CTkEntry(parent, textvariable=var, width=80, height=34, justify='center')
+
+        def switch(var):
+            return lambda parent: ctk.CTkSwitch(parent, text="", variable=var, progress_color=ACCENT)
+
+        setting("Game", "The game's program name. Input only goes out while this window is in front. "
+                        "Press Detect, then click on the game within 3 seconds.", game_widget)
+        setting("Start delay (seconds)", "Time to switch to the game after pressing Start.", number(self.delay))
+        setting("Menu read interval (seconds)", "How often the screen is read while a menu stays open. "
+                                                "It also reads right when a menu opens and after each click.",
+                number(self.read_interval))
+        setting("Autojoin", "Press F5 every 2 seconds, also in menus.", switch(self.autojoin))
+        setting("Anti-kick key", "Press L every 20 seconds while playing.", switch(self.anti_kick))
 
     # -- actions -----------------------------------------------------------------
     @staticmethod
@@ -358,15 +450,20 @@ class App:
         try:
             with open(SETTINGS_FILE, 'w') as f:
                 json.dump(data, f, indent=2)
-        except OSError as e:
-            print(f"Couldn't save settings: {e}")
+        except OSError:
+            pass
         return data
+
+    def start_or_stop(self):
+        if bot.is_started():
+            self.stop()
+        else:
+            self.start()
 
     def start(self, dry_run=False):
         data = self.save_settings()
         bot.READ_INTERVAL = data['read_interval']
-        if not data['game']:
-            print("Tip: set the game (Detect) so the bot only acts while it is in front.")
+        self.tabs.set("Dashboard")
         threading.Thread(target=bot.start, daemon=True, kwargs=dict(
             game=data['game'], autojoin_on=data['autojoin'],
             anti_kick_on=data['anti_kick'], delay=data['delay'], dry_run=dry_run)).start()
@@ -380,6 +477,7 @@ class App:
 
     def detect_game(self):
         print("Click on the game window within 3 seconds...")
+        self.detect_btn.configure(text="Click game…", state='disabled')
 
         def later():
             exe, title = bot.foreground_window()
@@ -389,6 +487,7 @@ class App:
                 print(f"Game set to {value}.")
             else:
                 print("Couldn't tell which game that was; type its exe name instead.")
+            self.root.after(0, lambda: self.detect_btn.configure(text="Detect", state='normal'))
         self.root.after(3000, lambda: threading.Thread(target=later, daemon=True).start())
 
     def refresh_screens(self):
@@ -396,50 +495,83 @@ class App:
         for child in self.screen_list.winfo_children():
             child.destroy()
         if not bot.rules['screens']:
-            ctk.CTkLabel(self.screen_list, text="No screens in rules.json.\nEvery menu stays paused.",
-                         text_color=MUTED, justify='left').grid(row=0, column=0, sticky='w', padx=8, pady=8)
+            ctk.CTkLabel(self.screen_list, text="No screens in rules.json. Every menu stays paused.",
+                         text_color=MUTED).grid(row=0, column=0, sticky='w', padx=8, pady=8)
         for i, screen in enumerate(bot.rules['screens']):
-            row = ctk.CTkFrame(self.screen_list, fg_color=BG, corner_radius=8)
-            row.grid(row=i, column=0, sticky='we', pady=3)
+            row = ctk.CTkFrame(self.screen_list, fg_color=BG, corner_radius=10)
+            row.grid(row=i, column=0, sticky='we', pady=4, padx=4)
             row.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(row, text=screen['name'], text_color=TEXT, anchor='w',
-                         font=ctk.CTkFont(FONT, 13, 'bold')).grid(row=0, column=0, sticky='w', padx=10, pady=(6, 0))
-            ctk.CTkLabel(row, text='"' + '" + "'.join(screen['if_seen']) + '"', text_color=MUTED, anchor='w',
-                         font=ctk.CTkFont(FONT, 11)).grid(row=1, column=0, sticky='w', padx=10, pady=(0, 6))
-            clicks = bool(screen['click'])
-            chip = f" click {screen['click']} " if clicks else (" pause (in match) " if screen['in_match'] else " wait ")
-            ctk.CTkLabel(row, text=chip, corner_radius=6,
-                         fg_color='#1e3a5f' if clicks else '#3f3f46', text_color=TEXT,
-                         font=ctk.CTkFont(FONT, 11)).grid(row=0, column=1, rowspan=2, padx=8)
+                         font=ctk.CTkFont(FONT, 14, 'bold')).grid(row=0, column=0, sticky='w', padx=14, pady=(10, 0))
+            when = "during a match, " if screen['in_match'] else ""
+            ctk.CTkLabel(row, text=f"{when}when it sees: " + "  +  ".join(screen['if_seen']), text_color=MUTED,
+                         anchor='w', font=ctk.CTkFont(FONT, 12)).grid(row=1, column=0, sticky='w', padx=14, pady=(0, 10))
+            if screen['click']:
+                c = chip(row, f"click {screen['click']}", '#1e3a5f')
+            elif screen['in_match']:
+                c = chip(row, "pause input", '#3b2f0b')
+            else:
+                c = chip(row, "wait", NEUTRAL_HOVER)
+            c.grid(row=0, column=1, rowspan=2, padx=14)
         never = bot.rules['never_click_if_seen']
-        if never:
-            ctk.CTkLabel(self.screen_list, text="Never clicks with " + ", ".join(never) + " on screen.",
-                         text_color=MUTED, wraplength=230, justify='left', font=ctk.CTkFont(FONT, 11)).grid(
-                row=len(bot.rules['screens']), column=0, sticky='w', padx=8, pady=(6, 2))
+        self.never_label.configure(text=("⛔ Never clicks while any of these is on screen: " + ", ".join(never))
+                                   if never else "")
 
     def edit_rules(self):
-        """Open rules.json in the default editor; the list reloads when the window is focused."""
         try:
-            os.startfile(bot.RULES_FILE)  # Windows
+            os.startfile(bot.RULES_FILE)  # Windows: opens in the default editor
+            print("Opened rules.json. Press Reload on the Screens tab after saving.")
         except AttributeError:
-            print(f"Edit {bot.RULES_FILE} in a text editor.")
+            print(f"Edit {bot.RULES_FILE} in a text editor, then press Reload.")
         except OSError as e:
             print(f"Couldn't open {bot.RULES_FILE}: {e}")
 
+    def set_read_result(self, text):
+        self.read_result.configure(state='normal')
+        self.read_result.delete('1.0', 'end')
+        self.read_result.insert('end', text)
+        self.read_result.configure(state='disabled')
+
     def read_screen(self):
         if bot.is_started():
-            print("Stop the bot first, or watch the state during a test run.")
+            self.set_read_result("Stop the bot first. During a test run the state shows what it sees.")
             return
         self.busy_reading = True
+        self.read_btn.configure(text="Switch to the game…")
+        self.set_read_result("Reading in 3 seconds. Switch to the game now.")
 
         def run():
             try:
-                bot.print_screen_text(delay=3)
+                time.sleep(3)
+                bot.rules = bot.load_rules()
+                read = bot.read_screen()
+                if read is None:
+                    result = "Couldn't capture the screen. Use borderless or windowed mode."
+                else:
+                    screen, danger = bot.classify(read)
+                    if danger:
+                        verdict = f"⛔ '{danger}' is on screen: the bot never clicks here."
+                    elif screen and screen['click']:
+                        verdict = f"✔ Screen '{screen['name']}': clicks '{screen['click']}' at " \
+                                  f"{bot.find_text(read, screen['click'])}."
+                    elif screen:
+                        verdict = f"✔ Screen '{screen['name']}': waits."
+                    else:
+                        verdict = "No rule matches. The bot sends nothing on this screen.\n" \
+                                  "To add one, pick a few words below that are only on this screen."
+                    words = "\n".join(f"  {text}" for text, _, _ in read['items'])
+                    result = f"{verdict}\n\nText on screen:\n{words}"
             except Exception as e:
-                print(f"Couldn't read the screen: {e}")
-            finally:
-                self.busy_reading = False
+                result = f"Couldn't read the screen: {e}"
+            self.root.after(0, self.set_read_result, result)
+            self.root.after(0, lambda: self.read_btn.configure(text="Read screen in 3s"))
+            self.busy_reading = False
         threading.Thread(target=run, daemon=True).start()
+
+    def clear_log(self):
+        self.log.configure(state='normal')
+        self.log.delete('1.0', 'end')
+        self.log.configure(state='disabled')
 
     def on_close(self):
         self.save_settings()
@@ -448,15 +580,48 @@ class App:
         self.root.destroy()
 
     # -- refresh -----------------------------------------------------------------
-    def poll(self):
+    @staticmethod
+    def log_tag(line):
+        if 'PLAYING' in line and line.startswith('['):
+            return 'playing'
+        if line.startswith('['):
+            return 'state'
+        if 'click' in line.lower():
+            return 'click'
+        if any(w in line for w in ('Warning', "Can't", "Couldn't", 'Not running', 'crashed', 'Tip')):
+            return 'warn'
+        return 'muted'
+
+    def flush_log(self):
         chunks = []
         while not self.log_queue.empty():
             chunks.append(self.log_queue.get_nowait())
-        if chunks:
-            self.log.configure(state='normal')
-            self.log.insert('end', ''.join(chunks))
-            self.log.see('end')
-            self.log.configure(state='disabled')
+        if not chunks:
+            return
+        self.log.configure(state='normal')
+        for line in ''.join(chunks).splitlines(keepends=True):
+            self.log.insert('end', line, self.log_tag(line))
+        self.log.see('end')
+        self.log.configure(state='disabled')
+
+    def update_stats(self, running):
+        s = bot.stats
+        if s['started'] is None:
+            return
+        playing = s['playing']
+        name, _, lasted = bot.current_state()
+        if name == bot.PLAYING:
+            playing += lasted
+        if running:
+            self.run_seconds = time.monotonic() - s['started']
+        values = {'running': bot.format_duration(getattr(self, 'run_seconds', 0)),
+                  'playing': bot.format_duration(playing),
+                  'matches': str(s['matches']), 'clicks': str(s['clicks']), 'kicks': str(s['kicks'])}
+        for key, value in values.items():
+            self.stat_values[key].configure(text=value)
+
+    def poll(self):
+        self.flush_log()
 
         # A crash or F9 sets stop_event; finish stopping cleanly.
         running = bot.is_started()
@@ -468,26 +633,42 @@ class App:
 
         name, detail, lasted = bot.current_state()
         color, explanation = STATE_STYLE.get(name, ('#52525b', ''))
-        self.dot.configure(text_color=color)
-        self.state_label.configure(text=name.title(), text_color=color if name != bot.STOPPED else TEXT)
         if bot.DRY_RUN and running and name == bot.PLAYING:
             explanation = "In a match (test run: sending nothing)"
+        self.dot.configure(text_color=color)
+        self.state_label.configure(text=name.title(), text_color=color if name != bot.STOPPED else TEXT)
         self.detail_label.configure(text=detail or explanation)
         self.timer_label.configure(text=bot.format_duration(lasted) if name != bot.STOPPED else '')
         if bot.DRY_RUN and running:
-            self.test_badge.grid(row=0, column=2, padx=18, sticky='e', pady=(16, 0))
+            self.test_badge.grid(row=2, column=1, columnspan=2, sticky='w', pady=(2, 0))
         else:
             self.test_badge.grid_remove()
         self.root.title(f"Anti-AFK · {name.title()}")
         self.flow.show(name, detail, color)
+        self.update_stats(running)
 
-        idle = not running and not self.busy_reading
-        for widget in (self.start_btn, self.test_btn, self.read_btn, self.detect_btn):
-            widget.configure(state='normal' if idle else 'disabled')
-        self.stop_btn.configure(state='normal' if running else 'disabled')
+        # Warnings in the header.
+        if bot.is_admin():
+            self.admin_chip.pack_forget()
+        else:
+            self.admin_chip.pack(side='left', padx=4)
+        if self.game.get().strip():
+            self.game_chip.pack_forget()
+        else:
+            self.game_chip.pack(side='left', padx=4)
+
+        # Buttons.
+        if running:
+            self.main_btn.configure(text="■  Stop", fg_color=DANGER, hover_color=DANGER_HOVER,
+                                    state='normal' if not self.stopping else 'disabled')
+        else:
+            self.main_btn.configure(text="▶  Start", fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                    state='disabled' if self.busy_reading else 'normal')
+        self.test_btn.configure(state='normal' if not running and not self.busy_reading else 'disabled')
         paused = not bot.running.is_set()
         self.pause_btn.configure(state='normal' if running and bot.started.is_set() else 'disabled',
                                  text="▶  Resume" if paused else "❚❚  Pause")
+        self.read_btn.configure(state='disabled' if running or self.busy_reading else 'normal')
         self.root.after(200, self.poll)
 
 
