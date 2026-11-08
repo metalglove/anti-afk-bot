@@ -20,6 +20,7 @@ Unknown menus, and any screen showing STORE, PURCHASE etc., stay paused.
 --read-screen prints the text it reads, to help add rules.
 """
 import argparse
+import csv
 import difflib
 import json
 import math
@@ -588,7 +589,70 @@ STARTING, PAUSED, NOT_FOCUSED, PLAYING, RESUMING, SCREEN, MENU, STOPPED = (
 DRY_RUN = False  # test mode: detect states and report clicks, but send nothing
 UNKNOWN_MENU_REMINDER = 300  # seconds in an unknown menu before suggesting a rule
 
-stats = {'started': None, 'clicks': 0, 'matches': 0, 'kicks': 0, 'playing': 0.0}
+stats = {'started': None, 'clicks': 0, 'matches': 0, 'kicks': 0, 'playing': 0.0,
+         'match_time': 0.0, 'last_match': None}
+
+# Match timing: a match starts at the first PLAYING after the previous one ended
+# and ends at VICTORY / DEFEAT, a kick, or the main menu. Finished matches are
+# appended to matches.csv (not in test runs), so the total time adds up across runs.
+HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'matches.csv')
+MATCH_END_SCREENS = {'victory': 'victory', 'defeat': 'defeat', 'kicked': 'kicked',
+                     'main_menu': 'left', 'searching': 'left'}
+match = {'start': None}  # wall-clock start of the current match
+
+
+def load_history():
+    """Finished matches from matches.csv: [{'date', 'duration', 'result'}], oldest first."""
+    rows = []
+    try:
+        with open(HISTORY_FILE, newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                try:
+                    rows.append({'date': row['date'], 'duration': float(row['duration_s']),
+                                 'result': row['result']})
+                except (KeyError, ValueError):
+                    pass
+    except OSError:
+        pass
+    return rows
+
+
+def _track_match(name, detail):
+    """Start or end the current match on state changes (called from enter_state)."""
+    if name == PLAYING and match['start'] is None:
+        match['start'] = time.time()
+        print(f"   Match started at {time.strftime('%H:%M')}.")
+        return
+    if name != SCREEN or match['start'] is None:
+        return
+    result = MATCH_END_SCREENS.get(detail.split(' (')[0])
+    if result is not None:
+        end_match(result)
+
+
+def end_match(result):
+    """Record the current match as finished with `result`."""
+    if match['start'] is None:
+        return
+    duration = time.time() - match['start']
+    started_at = match['start']
+    match['start'] = None
+    stats['match_time'] += duration
+    stats['last_match'] = (result, duration)
+    print(f"   Match over ({result}) after {format_duration(duration)}. "
+          f"Match time this session: {format_duration(stats['match_time'])}.")
+    if DRY_RUN:
+        return
+    try:
+        new_file = not os.path.exists(HISTORY_FILE)
+        with open(HISTORY_FILE, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if new_file:
+                writer.writerow(['date', 'duration_s', 'result'])
+            writer.writerow([time.strftime('%Y-%m-%d %H:%M', time.localtime(started_at)),
+                             round(duration), result])
+    except OSError as e:
+        print(f"   Couldn't save the match to {os.path.basename(HISTORY_FILE)}: {e}")
 
 state_lock = threading.Lock()
 state = {'name': STOPPED, 'detail': '', 'since': time.monotonic()}
@@ -672,6 +736,7 @@ def enter_state(name, detail=''):
     was = '' if same_name else f"   (after {format_duration(lasted)} {previous})"
     print(f"[{time.strftime('%H:%M:%S')}] {label}{was}")
     set_console_title(f"anti-afk: {label}")
+    _track_match(name, detail)
 
 
 def run_state_machine():
@@ -1249,7 +1314,9 @@ def start(game='', autojoin_on=False, anti_kick_on=False, delay=5, dry_run=False
 
     rules = load_rules()
     print(f"{len(rules['screens'])} known screens loaded from {os.path.basename(RULES_FILE)}.")
-    stats.update(started=time.monotonic(), clicks=0, matches=0, kicks=0, playing=0.0)
+    stats.update(started=time.monotonic(), clicks=0, matches=0, kicks=0, playing=0.0,
+                 match_time=0.0, last_match=None)
+    match['start'] = None
     tasks = [] if dry_run else list(HUMAN_MODE)
     if autojoin_on and not dry_run:
         tasks.append(autojoin)
@@ -1296,6 +1363,7 @@ def stop():
             t.join(max(0.0, deadline - time.monotonic()))
     _threads.clear()
     inputs.release_all()
+    end_match('stopped')  # count the time of a match that was still going
     if current_state()[0] != STOPPED:
         enter_state(STOPPED)
         print("Stopped; all keys released.")

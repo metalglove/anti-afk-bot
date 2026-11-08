@@ -94,6 +94,14 @@ flowchart TD
 | SCREEN | A screen listed in `rules.json` (see below); it clicks that screen's button |
 | MENU | A menu it doesn't know, or one showing STORE, PURCHASE etc.: it sends nothing |
 
+## Match time
+
+Each match is timed from the moment play starts until VICTORY / DEFEAT, a kick, or the
+main menu (or until you stop the bot mid-match). Finished matches are added to
+`matches.csv`, so the total keeps adding up across runs. The app shows the session and
+all-time totals on the Dashboard and every match on the **History** tab. Test runs aren't
+recorded.
+
 ## Menus and the store
 
 Input pauses whenever the mouse cursor is showing, which is how the game looks in menus,

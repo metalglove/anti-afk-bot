@@ -201,7 +201,9 @@ class App:
         self.log_queue = queue.Queue()
         self.busy_reading = False
         self.stopping = False
-        self.last_log_state = None
+        self.run_seconds = 0.0
+        self.history_total = 0.0
+        self.seen_last_match = None
         sys.stdout = sys.stderr = QueueWriter(self.log_queue)
 
         settings = load_settings()
@@ -246,13 +248,14 @@ class App:
         self.tabs = ctk.CTkTabview(root, fg_color='transparent', segmented_button_selected_color=ACCENT,
                                    segmented_button_selected_hover_color=ACCENT_HOVER, anchor='nw')
         self.tabs.grid(row=1, column=0, sticky='nswe', padx=12, pady=(0, 12))
-        for name in ("Dashboard", "Screens", "Settings"):
+        for name in ("Dashboard", "History", "Screens", "Settings"):
             self.tabs.add(name)
         try:  # roomier tab buttons
             self.tabs._segmented_button.configure(font=ctk.CTkFont(FONT, 13, 'bold'), height=34)
         except (AttributeError, ValueError):
             pass
         self.build_dashboard(self.tabs.tab("Dashboard"))
+        self.build_history(self.tabs.tab("History"))
         self.build_screens(self.tabs.tab("Screens"))
         self.build_settings(self.tabs.tab("Settings"))
 
@@ -298,15 +301,18 @@ class App:
         # Session stats.
         stats = card(tab)
         stats.grid(row=0, column=1, sticky='nswe', padx=(6, 0), pady=(0, 8))
-        stats.grid_columnconfigure((0, 1), weight=1)
-        heading(stats, "This session").grid(row=0, column=0, columnspan=2, sticky='w', padx=16, pady=(14, 4))
+        stats.grid_columnconfigure((0, 1, 2), weight=1, uniform='stats')
+        heading(stats, "Stats").grid(row=0, column=0, columnspan=3, sticky='w', padx=16, pady=(14, 4))
         self.stat_values = {}
-        for i, (key, label) in enumerate([('running', "Running for"), ('playing', "Time in matches"),
-                                          ('matches', "Matches finished"), ('clicks', "Menu clicks"),
-                                          ('kicks', "AFK kicks")]):
+        for i, (key, label) in enumerate([('match_time', "Match time, session"),
+                                          ('total', "Match time, all time"),
+                                          ('running', "Running for"),
+                                          ('matches', "Matches, session"),
+                                          ('last', "Last match"), ('kicks', "AFK kicks")]):
             box = ctk.CTkFrame(stats, fg_color=BG, corner_radius=10)
-            box.grid(row=1 + i // 2, column=i % 2, sticky='we', padx=(16 if i % 2 == 0 else 6, 16 if i % 2 else 6), pady=5)
-            value = ctk.CTkLabel(box, text="–", text_color=TEXT, font=ctk.CTkFont(FONT, 20, 'bold'), anchor='w')
+            box.grid(row=1 + i // 3, column=i % 3, sticky='we',
+                     padx=(16 if i % 3 == 0 else 4, 16 if i % 3 == 2 else 4), pady=5)
+            value = ctk.CTkLabel(box, text="–", text_color=TEXT, font=ctk.CTkFont(FONT, 18, 'bold'), anchor='w')
             value.pack(anchor='w', padx=12, pady=(8, 0))
             ctk.CTkLabel(box, text=label, text_color=MUTED, font=ctk.CTkFont(FONT, 11), anchor='w').pack(
                 anchor='w', padx=12, pady=(0, 8))
@@ -338,6 +344,77 @@ class App:
                            ('playing', '#86efac'), ('muted', MUTED)):
             self.log.tag_config(tag, foreground=color)
         self.log.configure(state='disabled')
+
+    def build_history(self, tab):
+        tab.grid_columnconfigure(0, weight=1)
+        tab.grid_rowconfigure(1, weight=1)
+        summary = card(tab)
+        summary.grid(row=0, column=0, sticky='we', pady=(0, 8))
+        summary.grid_columnconfigure((0, 1, 2), weight=1, uniform='hist')
+        self.hist_values = {}
+        for i, (key, label) in enumerate([('total', "Total match time"), ('count', "Matches recorded"),
+                                          ('average', "Average match")]):
+            box = ctk.CTkFrame(summary, fg_color=BG, corner_radius=10)
+            box.grid(row=0, column=i, sticky='we', padx=(16 if i == 0 else 4, 16 if i == 2 else 4), pady=14)
+            value = ctk.CTkLabel(box, text="–", text_color=TEXT, font=ctk.CTkFont(FONT, 24, 'bold'))
+            value.pack(anchor='w', padx=14, pady=(10, 0))
+            ctk.CTkLabel(box, text=label, text_color=MUTED, font=ctk.CTkFont(FONT, 12)).pack(
+                anchor='w', padx=14, pady=(0, 10))
+            self.hist_values[key] = value
+
+        table = card(tab)
+        table.grid(row=1, column=0, sticky='nswe')
+        table.grid_columnconfigure(0, weight=1)
+        table.grid_rowconfigure(2, weight=1)
+        top = ctk.CTkFrame(table, fg_color='transparent')
+        top.grid(row=0, column=0, sticky='we', padx=16, pady=(14, 4))
+        top.grid_columnconfigure(0, weight=1)
+        heading(top, "Matches").grid(row=0, column=0, sticky='w')
+        ctk.CTkButton(top, text="Open matches.csv", width=130, height=28, corner_radius=8, fg_color=NEUTRAL,
+                      hover_color=NEUTRAL_HOVER, command=self.open_history).grid(row=0, column=1)
+        cols = ctk.CTkFrame(table, fg_color='transparent')
+        cols.grid(row=1, column=0, sticky='we', padx=24)
+        for i, (text, weight) in enumerate((("Started", 3), ("Duration", 2), ("Result", 2))):
+            cols.grid_columnconfigure(i, weight=weight, uniform='cols')
+            ctk.CTkLabel(cols, text=text, text_color=MUTED, anchor='w',
+                         font=ctk.CTkFont(FONT, 12, 'bold')).grid(row=0, column=i, sticky='w')
+        self.history_list = ctk.CTkScrollableFrame(table, fg_color='transparent')
+        self.history_list.grid(row=2, column=0, sticky='nswe', padx=8, pady=(0, 12))
+        self.history_list.grid_columnconfigure(0, weight=1)
+        self.refresh_history()
+
+    def refresh_history(self):
+        rows = bot.load_history()
+        self.history_total = sum(r['duration'] for r in rows)
+        self.hist_values['total'].configure(text=bot.format_duration(self.history_total))
+        self.hist_values['count'].configure(text=str(len(rows)))
+        self.hist_values['average'].configure(
+            text=bot.format_duration(self.history_total / len(rows)) if rows else '–')
+        for child in self.history_list.winfo_children():
+            child.destroy()
+        if not rows:
+            ctk.CTkLabel(self.history_list, text="No matches recorded yet. Finished matches show up here "
+                                                 "(test runs aren't recorded).",
+                         text_color=MUTED).grid(row=0, column=0, sticky='w', padx=16, pady=8)
+        colors = {'victory': GOOD, 'defeat': DANGER, 'kicked': WARN}
+        for i, r in enumerate(reversed(rows[-200:])):
+            row = ctk.CTkFrame(self.history_list, fg_color=BG if i % 2 == 0 else 'transparent', corner_radius=8)
+            row.grid(row=i, column=0, sticky='we', padx=4, pady=1)
+            for c, weight in enumerate((3, 2, 2)):
+                row.grid_columnconfigure(c, weight=weight, uniform='cols')
+            ctk.CTkLabel(row, text=r['date'], text_color=TEXT, anchor='w').grid(row=0, column=0, sticky='w', padx=12, pady=4)
+            ctk.CTkLabel(row, text=bot.format_duration(r['duration']), text_color=TEXT, anchor='w',
+                         font=ctk.CTkFont(MONO, 13)).grid(row=0, column=1, sticky='w', padx=12)
+            ctk.CTkLabel(row, text=r['result'], text_color=colors.get(r['result'], MUTED), anchor='w',
+                         font=ctk.CTkFont(FONT, 13, 'bold')).grid(row=0, column=2, sticky='w', padx=12)
+
+    def open_history(self):
+        try:
+            os.startfile(bot.HISTORY_FILE)
+        except AttributeError:
+            print(f"Match history is in {bot.HISTORY_FILE}.")
+        except OSError:
+            print("No matches recorded yet.")
 
     def build_screens(self, tab):
         tab.grid_columnconfigure(0, weight=3, uniform='screens')
@@ -606,17 +683,19 @@ class App:
 
     def update_stats(self, running):
         s = bot.stats
-        if s['started'] is None:
-            return
-        playing = s['playing']
-        name, _, lasted = bot.current_state()
-        if name == bot.PLAYING:
-            playing += lasted
-        if running:
+        if s['last_match'] is not self.seen_last_match:  # a match just ended: reload history
+            self.seen_last_match = s['last_match']
+            self.refresh_history()
+        current = time.time() - bot.match['start'] if bot.match['start'] else 0.0
+        if running and s['started'] is not None:
             self.run_seconds = time.monotonic() - s['started']
-        values = {'running': bot.format_duration(getattr(self, 'run_seconds', 0)),
-                  'playing': bot.format_duration(playing),
-                  'matches': str(s['matches']), 'clicks': str(s['clicks']), 'kicks': str(s['kicks'])}
+        last = s['last_match']
+        values = {'running': bot.format_duration(self.run_seconds) if s['started'] else '–',
+                  'match_time': bot.format_duration(s['match_time'] + current),
+                  'total': bot.format_duration(self.history_total + current),
+                  'matches': str(s['matches']),
+                  'last': f"{bot.format_duration(last[1])} · {last[0]}" if last else '–',
+                  'kicks': str(s['kicks'])}
         for key, value in values.items():
             self.stat_values[key].configure(text=value)
 
