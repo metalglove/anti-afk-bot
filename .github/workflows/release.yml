@@ -67,10 +67,11 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/AntiAFK -DestinationPath "AntiAFK-v$env:VERSION-windows.zip"
 
+      # GitHub always zips artifacts, so upload the folder itself (not our ZIP) to avoid a ZIP in a ZIP.
       - uses: actions/upload-artifact@v4
         with:
           name: AntiAFK-v${{ env.VERSION }}-windows
-          path: AntiAFK-v${{ env.VERSION }}-windows.zip
+          path: dist
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
