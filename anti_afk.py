@@ -643,13 +643,15 @@ stats = {'started': None, 'clicks': 0, 'matches': 0, 'kicks': 0, 'playing': 0.0,
 HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'matches.csv')
 MATCH_END_SCREENS = {'victory': 'victory', 'defeat': 'defeat', 'kicked': 'kicked',
                      'report_victory': 'victory', 'report_defeat': 'defeat', 'report': 'over',
-                     'main_menu': 'left', 'searching': 'left'}
+                     'main_menu': 'left', 'main_menu_hardcore': 'left',
+                     'searching': 'left'}
 match = {'start': None,    # wall-clock start of the current match
          'over_at': None}  # monotonic time the last match ended (VICTORY / DEFEAT)
 # After VICTORY / DEFEAT the game shows a few screens without a cursor (best play,
 # scoreboard). Those aren't a new match: input stays paused until a pre-match screen
 # shows up (or POST_MATCH_TIMEOUT passes, in case those screens were missed).
-PRE_MATCH_SCREENS = {'searching', 'lobby', 'lobby_found', 'class_select', 'main_menu', 'kicked'}
+PRE_MATCH_SCREENS = {'searching', 'lobby', 'lobby_found', 'class_select', 'main_menu',
+                     'main_menu_hardcore', 'kicked'}
 POST_MATCH_TIMEOUT = 300.0
 
 

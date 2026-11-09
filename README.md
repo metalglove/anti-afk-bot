@@ -182,6 +182,7 @@ which screen has which words and what to do there:
 {"name": "kicked",       "if_seen": ["KICKED FOR INACTIVITY"],  "click": "EXIT"},
 {"name": "searching",    "if_seen": ["SEARCHING FOR A MATCH"]},
 {"name": "main_menu",    "if_seen": ["QUICK PLAY", "FEATURED"], "click": "QUICK PLAY"},
+{"name": "main_menu_hardcore", "if_seen": ["HARDCORE", "FEATURED"], "click": "HARDCORE"},
 {"name": "report",       "if_seen": ["AFTER ACTION REPORT"],    "press": "ESC"},
 {"name": "pause_menu",   "if_seen": ["RETURN TO GAME", "LEAVE MATCH"], "press": "ESC"},
 {"name": "class_select", "if_seen": ["SELECT CLASS"],           "press": "SPACE"}
@@ -205,7 +206,9 @@ aren't mistaken for a new match. If none shows up within 5 minutes it plays agai
 Rules are checked from top to bottom and the first match wins. The After Action Report
 also shows "SEARCHING FOR A MATCH" in its corner, so its rules (`report_victory`,
 `report_defeat`, `report`) come before `searching`, and `searching` comes before
-`main_menu` so the bot never clicks QUICK PLAY while a search is running. The report
+`main_menu` so the bot never clicks QUICK PLAY while a search is running. If Hardcore is
+selected, the big play button says HARDCORE instead of QUICK PLAY; `main_menu_hardcore`
+clicks that one (the topmost HARDCORE, not the small tag on a mode tile). The report
 records the match as a victory or defeat (in case the bot missed the banner), then the
 bot presses ESC to dismiss it.
 

@@ -119,7 +119,7 @@ class FlowDiagram:
     SIDE = [(bot.STARTING, "Starting"), (bot.PAUSED, "Paused (F8)"),
             (bot.NOT_FOCUSED, "Not focused"), (bot.STOPPED, "Stopped (F9)")]
     SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over',
-                   'best_play': 'over', 'post_match': 'over',
+                   'best_play': 'over', 'post_match': 'over', 'main_menu_hardcore': 'main_menu',
                    'report_victory': 'report', 'report_defeat': 'report'}
     NODE_W, NODE_H = 150, 56
 
