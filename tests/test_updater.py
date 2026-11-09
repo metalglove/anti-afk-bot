@@ -51,13 +51,14 @@ class Install(unittest.TestCase):
             os.mkdir(app)
             started = []
             real_popen, real_app_dir = subprocess.Popen, updater.app_dir
-            subprocess.Popen = lambda args, **kw: started.append(args)
+            subprocess.Popen = lambda command, **kw: started.append(command)
             updater.app_dir = lambda: app
             try:
                 updater.install({'url': 'file:///' + zip_path.replace(os.sep, '/').lstrip('/'), 'size': 1})
             finally:
                 subprocess.Popen, updater.app_dir = real_popen, real_app_dir
-            pid, source, target, work, exe = started[0][3:]
+            # cmd /d /s /c ""script" "pid" "source" "target" "work" "exe""
+            pid, source, target, work, exe = started[0].split('"')[4::2][:5]
             self.assertEqual((pid, target, exe), (str(os.getpid()), app, 'AntiAFK.exe'))
             self.assertEqual(sorted(os.listdir(source)), ['AntiAFK.exe', '_internal'])  # settings.json dropped
             self.assertTrue(os.path.exists(os.path.join(work, 'update.cmd')))
@@ -86,7 +87,7 @@ class UpdateScript(unittest.TestCase):
             script = os.path.join(work, 'update.cmd')
             with open(script, 'w', newline='\r\n') as f:
                 f.write(updater.UPDATE_SCRIPT)
-            subprocess.run(['cmd', '/c', script, '999999', new, app, work, 'launch.cmd'], timeout=60)
+            subprocess.run(updater.script_command(script, 999999, new, app, work, 'launch.cmd'), timeout=60)
 
             def read(name):
                 with open(os.path.join(app, name)) as f:

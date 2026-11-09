@@ -140,5 +140,12 @@ def install(update, progress=None):
     with open(script, 'w', newline='\r\n') as f:
         f.write(UPDATE_SCRIPT)
     flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0) | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
-    subprocess.Popen(['cmd', '/c', script, str(os.getpid()), source, target, work, EXE_NAME],
+    subprocess.Popen(script_command(script, os.getpid(), source, target, work, EXE_NAME),
                      creationflags=flags, close_fds=True, cwd=tempfile.gettempdir())
+
+
+def script_command(script, *args):
+    """The command line that runs the update script. cmd /c mangles a list of quoted paths
+    (folders with spaces), so wrap them all in one more pair of quotes and use /s."""
+    quoted = ' '.join(f'"{arg}"' for arg in (script, *args))
+    return f'cmd /d /s /c "{quoted}"'
