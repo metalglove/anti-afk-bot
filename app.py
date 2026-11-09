@@ -912,6 +912,8 @@ def self_test():
     if not rules['screens']:
         raise SystemExit(f"No screens loaded from {bot.RULES_FILE}")
     root = ctk.CTk()  # the window toolkit and its theme files load
+    icon = os.path.join(getattr(sys, '_MEIPASS', HERE), 'assets', 'icon.ico')
+    root.iconbitmap(icon)
     root.destroy()
     print(f"Self-test OK: version {updater.VERSION}, {len(rules['screens'])} screens")
 
@@ -930,6 +932,13 @@ def main():
     ctk.set_appearance_mode('dark')
     ctk.set_default_color_theme('blue')
     root = ctk.CTk()
+    # The window icon; in AntiAFK.exe it's bundled inside the app (sys._MEIPASS).
+    icon = os.path.join(getattr(sys, '_MEIPASS', HERE), 'assets', 'icon.ico')
+    if os.path.exists(icon):
+        try:
+            root.iconbitmap(icon)
+        except tk.TclError:
+            pass
     App(root)
     root.mainloop()
 
