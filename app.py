@@ -1,6 +1,6 @@
 """Anti-AFK bot: window version.
 
-Start it with `python app.py`.
+Start it with `python app.py`, or AntiAFK.exe in the downloaded app.
 Same engine as anti_afk.py; this adds a window with the live state, a state
 diagram, session stats, the known screens and settings. Settings are remembered
 in settings.json.
@@ -11,14 +11,20 @@ import queue
 import sys
 import threading
 import time
+import zipfile
 import tkinter as tk
 import tkinter.font as tkfont
+from tkinter import messagebox
+
+if sys.stdout is None:  # AntiAFK.exe has no console: give print() somewhere to go until the log takes over
+    sys.stdout = sys.stderr = open(os.devnull, 'w')
 
 import customtkinter as ctk
 
 import anti_afk as bot
+import updater
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = bot.APP_DIR
 SETTINGS_FILE = os.path.join(HERE, 'settings.json')
 DEFAULTS = {'game': 'cod.exe', 'delay': 5,
             'read_interval': bot.READ_INTERVAL}
@@ -274,6 +280,10 @@ class App:
         self.hotkeys = bot.Listener(on_press=bot.on_hotkey)
         self.hotkeys.start()
         self.refresh_screens()
+        self.update = None  # a newer release, once found
+        self.updating = False
+        if updater.is_app_build():
+            self.root.after(2000, self.check_for_update)
         self.poll()
 
     # -- layout ----------------------------------------------------------------
@@ -296,6 +306,9 @@ class App:
         self.warnings.grid(row=0, column=2, sticky='e')
         self.game_chip = chip(self.warnings, "⚠ No game set (Settings)", '#422006', '#fcd34d')
         self.game_chip.bind('<Button-1>', lambda e: self.tabs.set("Settings"))
+        self.update_chip = chip(self.warnings, "", '#1e3a8a', '#bfdbfe')
+        self.update_chip.configure(cursor='hand2')
+        self.update_chip.bind('<Button-1>', lambda e: self.offer_update())
         tk.Frame(root, bg=CARD_BORDER, height=1).grid(row=0, column=0, sticky='swe')
 
         pages = ctk.CTkFrame(root, fg_color='transparent')
@@ -556,11 +569,31 @@ class App:
                                                 "It also reads right when a menu opens and after each click.",
                 number(self.read_interval))
         admin = bot.is_admin()
+        how = ("right-click AntiAFK.exe and choose Run as administrator" if updater.is_app_build() else
+               "start the terminal as administrator and run python app.py from there")
         setting("Administrator", "Only needed if the game itself runs as administrator: Windows doesn't "
-                                 "let a normal program send input to it. Then start the terminal as "
-                                 "administrator and run python app.py from there.",
+                                 f"let a normal program send input to it. Then {how}.",
                 lambda parent: chip(parent, "Running as admin" if admin else "Not running as admin",
                                     '#14361f' if admin else NEUTRAL, GOOD if admin else MUTED))
+
+        def version_widget(parent):
+            frame = ctk.CTkFrame(parent, fg_color='transparent')
+            self.version_label = ctk.CTkLabel(frame, text="", text_color=MUTED, font=ctk.CTkFont(FONT, 12))
+            self.version_label.pack(side='left')
+            if updater.is_app_build():
+                self.check_btn = ctk.CTkButton(frame, text="Check for updates", width=140, height=34,
+                                               fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER,
+                                               command=lambda: self.check_for_update(manual=True))
+                self.check_btn.pack(side='left', padx=(10, 0))
+            return frame
+
+        if updater.is_app_build():
+            setting(f"Version {updater.VERSION}", "The app looks for a new version each time it starts. "
+                                                  "Updating keeps your settings and match history.",
+                    version_widget)
+        else:
+            setting("Version", "Running from source, so it doesn't update itself. Download the app from "
+                               "the Releases page to get automatic updates.", version_widget)
 
     # -- actions -----------------------------------------------------------------
     @staticmethod
@@ -701,6 +734,74 @@ class App:
         self.log.delete('1.0', 'end')
         self.log.configure(state='disabled')
 
+    # -- updates -----------------------------------------------------------------
+    def check_for_update(self, manual=False):
+        if self.updating:
+            return
+        self.version_label.configure(text="Checking…")
+
+        def run():
+            try:
+                found, problem = updater.check(), None
+            except (OSError, ValueError) as e:
+                found, problem = None, e
+            self.root.after(0, self.update_checked, found, problem, manual)
+        threading.Thread(target=run, daemon=True).start()
+
+    def update_checked(self, found, problem, manual):
+        self.update = found
+        if problem:
+            self.version_label.configure(text="Couldn't check")
+            if manual:
+                messagebox.showwarning("Anti-AFK", f"Couldn't check for updates. Is the internet working?\n\n"
+                                                   f"({problem})")
+        elif found:
+            self.version_label.configure(text=f"Version {found['version']} is available")
+            self.update_chip.configure(text=f"  ⬆ Update to {found['version']}  ")
+            self.update_chip.pack(side='left', padx=4)
+            print(f"A new version ({found['version']}) is available. Click \"Update\" at the top to install it.")
+            if manual:
+                self.offer_update()
+        else:
+            self.version_label.configure(text="Up to date")
+            if manual:
+                messagebox.showinfo("Anti-AFK", f"You have the newest version ({updater.VERSION}).")
+
+    def offer_update(self):
+        if not self.update or self.updating:
+            return
+        version = self.update['version']
+        if not messagebox.askyesno("Update Anti-AFK",
+                                   f"Version {version} is available (you have {updater.VERSION}).\n\n"
+                                   "Update now? The bot stops, the app closes, and it opens again by itself "
+                                   "in a few seconds. Your settings and match history are kept."):
+            return
+        self.updating = True
+        bot.stop()
+        self.update_chip.configure(text="  Downloading update…  ")
+        print(f"Downloading version {version}...")
+
+        def progress(fraction):
+            self.root.after(0, lambda: self.update_chip.configure(
+                text=f"  Downloading update… {fraction:.0%}  "))
+
+        def run():
+            try:
+                updater.install(self.update, progress)
+            except (OSError, ValueError, zipfile.BadZipFile) as e:
+                self.root.after(0, self.update_failed, e)
+                return
+            print("Installing the update. The app reopens in a few seconds.")
+            self.root.after(800, self.on_close)
+        threading.Thread(target=run, daemon=True).start()
+
+    def update_failed(self, problem):
+        self.updating = False
+        self.update_chip.configure(text=f"  ⬆ Update to {self.update['version']}  ")
+        print(f"Couldn't update: {problem}")
+        messagebox.showerror("Anti-AFK", f"The update didn't work:\n{problem}\n\nYou can also download it "
+                                         f"yourself from {updater.RELEASES_PAGE}")
+
     def on_close(self):
         self.save_settings()
         bot.stop()
@@ -798,7 +899,34 @@ class App:
         self.root.after(200, self.poll)
 
 
+def self_test():
+    """Checks the built app can load everything it needs (used by the release build)."""
+    from PIL import Image, ImageDraw
+    problem = bot.text_recognition_problem()
+    if problem:
+        raise SystemExit(problem)
+    image = Image.new('RGB', (320, 80), 'white')
+    ImageDraw.Draw(image).text((20, 30), "QUICK PLAY", fill='black')
+    bot.ocr(image)  # loads the text recognition models; the result itself doesn't matter
+    rules = bot.load_rules()
+    if not rules['screens']:
+        raise SystemExit(f"No screens loaded from {bot.RULES_FILE}")
+    root = ctk.CTk()  # the window toolkit and its theme files load
+    root.destroy()
+    print(f"Self-test OK: version {updater.VERSION}, {len(rules['screens'])} screens")
+
+
 def main():
+    if '--self-test' in sys.argv:  # writes self-test.log next to the app, since the exe has no console
+        with open(os.path.join(HERE, 'self-test.log'), 'w') as log:
+            sys.stdout = sys.stderr = log
+            try:
+                self_test()
+            except BaseException:
+                import traceback
+                traceback.print_exc()
+                raise SystemExit(1)
+        return
     ctk.set_appearance_mode('dark')
     ctk.set_default_color_theme('blue')
     root = ctk.CTk()

@@ -35,6 +35,10 @@ import traceback
 import pydirectinput
 from pynput.keyboard import Controller, Key, Listener
 
+# Where rules.json and matches.csv live: next to this script, or next to AntiAFK.exe in the
+# downloaded app (there __file__ points inside its _internal folder).
+APP_DIR = os.path.dirname(sys.executable if getattr(sys, 'frozen', False) else os.path.abspath(__file__))
+
 # The mouse-corner failsafe misfires in games that lock the cursor; F9 replaces it.
 pydirectinput.FAILSAFE = False
 
@@ -356,7 +360,7 @@ def menu_reason():
 # is on screen. Rules with "in_match": true are also checked during a match
 # (every MATCH_READ_INTERVAL s, no cursor needed) and pause input while they match,
 # e.g. the VICTORY / DEFEAT banner at the end of a match. No per-resolution setup: the words are found wherever they are.
-RULES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'rules.json')
+RULES_FILE = os.path.join(APP_DIR, 'rules.json')
 READ_INTERVAL = 3.0               # seconds between screen reads while a menu stays open
 READ_AFTER_CLICK = 0.8            # seconds after a click before reading the new screen
 MATCH_READ_INTERVAL = 5.0         # seconds between reads during a match, only if a rule has
@@ -640,7 +644,7 @@ stats = {'started': None, 'clicks': 0, 'matches': 0, 'kicks': 0, 'playing': 0.0,
 # Match timing: a match starts at the first PLAYING after the previous one ended
 # and ends at VICTORY / DEFEAT, a kick, or the main menu. Finished matches are
 # appended to matches.csv (not in test runs), so the total time adds up across runs.
-HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'matches.csv')
+HISTORY_FILE = os.path.join(APP_DIR, 'matches.csv')
 MATCH_END_SCREENS = {'victory': 'victory', 'defeat': 'defeat', 'kicked': 'kicked',
                      'report_victory': 'victory', 'report_defeat': 'defeat', 'report': 'over',
                      'main_menu': 'left', 'main_menu_hardcore': 'left',

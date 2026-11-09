@@ -6,3 +6,8 @@ venv/
 screens/
 settings.json
 matches.csv
+version.py
+build/
+dist/
+*.spec
+self-test.log
