@@ -1,0 +1,80 @@
+# Builds the Windows app (AntiAFK.exe) and, for a version tag like v1.2.0, publishes it as a
+# GitHub release. The app checks the latest release to update itself.
+#
+# Make a release: git tag v1.2.0 && git push origin v1.2.0
+name: Windows app
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Run tests
+        run: python -m unittest discover tests -v
+
+      - name: Set version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0"  # test builds: any real release counts as an update
+          fi
+          echo "VERSION = '$version'" > version.py
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build AntiAFK.exe
+        run: >
+          pyinstaller app.py --name AntiAFK --windowed --noconfirm --clean
+          --hidden-import version
+          --hidden-import pynput.keyboard._win32 --hidden-import pynput.mouse._win32
+          --collect-all rapidocr_onnxruntime --collect-all onnxruntime
+          --collect-data customtkinter
+
+      - name: Add files next to the app
+        shell: bash
+        run: |
+          cp rules.json dist/AntiAFK/
+          cp README.md dist/AntiAFK/README.txt
+
+      - name: Check the app starts
+        shell: pwsh
+        run: |
+          $p = Start-Process dist/AntiAFK/AntiAFK.exe -ArgumentList '--self-test' -Wait -PassThru
+          Get-Content dist/AntiAFK/self-test.log
+          Remove-Item dist/AntiAFK/self-test.log
+          if ($p.ExitCode -ne 0) { exit 1 }
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path dist/AntiAFK -DestinationPath "AntiAFK-v$env:VERSION-windows.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AntiAFK-v${{ env.VERSION }}-windows
+          path: AntiAFK-v${{ env.VERSION }}-windows.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AntiAFK-v${{ env.VERSION }}-windows.zip
+          generate_release_notes: true

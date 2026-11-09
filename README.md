@@ -7,49 +7,33 @@ Keeps you from getting kicked for inactivity while you're away from the game.
 
 ## Getting started (step by step)
 
-You only have to do steps 1 to 3 once.
+You don't need to install anything else. Steps 1 and 2 are only needed once.
 
-### 1. Install Python
+### 1. Download the app
 
-1. Go to <https://www.python.org/downloads/windows/> and download **Python 3.13** (the
-   "Windows installer (64-bit)"). Don't take a newer version like 3.15: it doesn't work yet.
-2. Open the downloaded file. On the first screen, tick **"Add python.exe to PATH"** at the
-   bottom, then click **Install Now**.
+1. Go to the [latest release](https://github.com/metalglove/anti-afk-bot/releases/latest).
+2. Under **Assets**, click the file whose name ends in **-windows.zip** (for example
+   `AntiAFK-v1.0.0-windows.zip`). It downloads to your Downloads folder.
 
-Already have Python? It must be version 3.11, 3.12, 3.13 or 3.14.
+### 2. Unzip it
 
-### 2. Download the bot
+1. Open your Downloads folder, right-click the ZIP and choose **Extract All...**.
+2. Choose where to put it. Your **Desktop** or **Documents** is best (not "Program Files",
+   because then the app can't update itself). Click **Extract**.
+3. You now have a folder called `AntiAFK`. Keep everything in it together.
 
-1. On this GitHub page, click the green **Code** button, then **Download ZIP**.
-2. Open your Downloads folder, right-click the ZIP, choose **Extract All...**, and click
-   **Extract**. You now have a folder called `anti-afk-bot-main`.
+Tip: right-click `AntiAFK.exe` and choose **Send to → Desktop (create shortcut)** so you can
+start it from your desktop.
 
-### 3. Install what the bot needs
+### 3. Start the app
 
-1. Open the `anti-afk-bot-main` folder (the one that contains `app.py`).
-2. Click in the address bar at the top of the window (where the folder path is), type
-   `cmd` and press **Enter**. A black window opens.
-3. Copy this line, paste it in the black window (right-click pastes) and press **Enter**:
+Double-click **AntiAFK.exe** in the `AntiAFK` folder. The Anti-AFK window opens.
 
-   ```
-   py -3.13 -m pip install -r requirements.txt
-   ```
+The first time, Windows may show a blue box saying **"Windows protected your PC"**. That's
+because the app is new and not from a big company. Click **More info**, then **Run anyway**.
+You only have to do this once (and once more after an update, sometimes).
 
-   Wait until it's done (a minute or two). The last line should start with
-   "Successfully installed". You can close the black window.
-
-### 4. Start the app
-
-Every time you want to use the bot: open the `anti-afk-bot-main` folder, type `cmd` in the
-address bar again, and run:
-
-```
-py -3.13 app.py
-```
-
-The Anti-AFK window opens. Keep the black window open while you use it.
-
-### 5. Use it
+### 4. Use it
 
 1. Start the game and set its display mode to **Borderless** or **Windowed** (not
    Fullscreen), so the bot can read the screen.
@@ -66,14 +50,26 @@ The Anti-AFK window opens. Keep the black window open while you use it.
 The game is set to `cod.exe`. For another game, open **Settings**, click **Detect** and
 then click on the game window.
 
+### Updates
+
+The app checks for a new version every time it starts. When there is one, a blue
+**Update to ...** button shows at the top of the window:
+
+1. Click it, then click **Yes**.
+2. Wait a few seconds. The app closes, updates, and opens again by itself.
+
+Your settings and match history are kept. You can also check yourself under
+**Settings → Check for updates**.
+
 ### Something went wrong?
 
 | Problem | Fix |
 | --- | --- |
-| `'py' is not recognized` | Python isn't installed, or "Add python.exe to PATH" wasn't ticked. Run the Python installer again and tick it. |
-| `conflicting dependencies` or `No matching distribution` | Your Python is too new. Install Python 3.13 (step 1) and use the `py -3.13` commands. |
-| `No module named ...` | Step 3 didn't finish. Run it again. |
-| The bot does nothing in the game | Use Borderless or Windowed mode. If the game runs as administrator, open the black window as administrator too (search "cmd", right-click, "Run as administrator"). |
+| "Windows protected your PC" | Click **More info**, then **Run anyway**. |
+| Windows says the file is a virus or deletes it | Some antivirus programs don't trust new apps. Download it again from the release page; if it keeps happening, ask whoever maintains the bot. |
+| The bot does nothing in the game | Use Borderless or Windowed mode. If the game runs as administrator, close the app, right-click `AntiAFK.exe` and choose **Run as administrator**. |
+| The update says it can't write to the folder | Move the whole `AntiAFK` folder to your Desktop or Documents and start it from there. |
+| The update didn't work | Download the newest ZIP from the [release page](https://github.com/metalglove/anti-afk-bot/releases/latest) and unzip it over your old `AntiAFK` folder (choose to replace the files). |
 | A screen isn't recognized | Open the **Screens** page, press **Read screen**, switch to the game, and send the text it shows to whoever maintains the bot. |
 
 ## The app
@@ -86,6 +82,37 @@ remembered between runs.
 
 Prefer the terminal? `python anti_afk.py` does the same. The game defaults to `cod.exe`
 (`--game` for another one, `--help` for options, `--test` for test mode).
+
+An update replaces `rules.json` with the one from the new version. If you had changed
+yours, the old one is saved as `rules.json.bak` next to it.
+
+## Running from source (for developers)
+
+Needs Python 3.11 to 3.14 (3.13 recommended; 3.15 doesn't work yet because onnxruntime has
+no build for it):
+
+```
+py -3.13 -m pip install -r requirements.txt
+py -3.13 app.py
+```
+
+Running from source doesn't update itself; use `git pull`.
+
+## Making a release
+
+Push a version tag, for example:
+
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)) builds
+`AntiAFK.exe` with PyInstaller, checks that it starts, zips the `AntiAFK` folder as
+`AntiAFK-v1.0.0-windows.zip` and publishes it as a GitHub release. Everyone's app then
+offers the update the next time it starts. Versions are compared as numbers, so always
+tag a higher version than the last one. Every pull request also builds the app; the ZIP
+is under **Artifacts** on the workflow run, for testing before a release.
 
 # How it works
 
