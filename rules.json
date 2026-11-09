@@ -11,6 +11,7 @@
     {"name": "pause_menu", "if_seen": ["RETURN TO GAME", "LEAVE MATCH"], "press": "ESC"},
     {"name": "searching", "if_seen": ["SEARCHING FOR A MATCH"]},
     {"name": "main_menu", "if_seen": ["QUICK PLAY", "FEATURED"], "click": "QUICK PLAY"},
+    {"name": "main_menu_hardcore", "if_seen": ["HARDCORE", "FEATURED"], "click": "HARDCORE"},
     {"name": "lobby", "if_seen": ["MAP VOTING"]},
     {"name": "lobby_found", "if_seen": ["BEST LOBBY FOUND"]},
     {"name": "class_select", "if_seen": ["SELECT CLASS"], "press": "SPACE"},
