@@ -1,3 +1,5 @@
+<img src="assets/icon.png" width="96" alt="">
+
 # anti-afk-bot
 
 Keeps you from getting kicked for inactivity while you're away from the game.

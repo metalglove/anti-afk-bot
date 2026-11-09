@@ -44,6 +44,7 @@ jobs:
       - name: Build AntiAFK.exe
         run: >
           pyinstaller app.py --name AntiAFK --windowed --noconfirm --clean
+          --icon assets/icon.ico --add-data "assets/icon.ico;assets"
           --hidden-import version
           --hidden-import pynput.keyboard._win32 --hidden-import pynput.mouse._win32
           --collect-all rapidocr_onnxruntime --collect-all onnxruntime
