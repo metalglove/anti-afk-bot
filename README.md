@@ -111,8 +111,26 @@ GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)
 `AntiAFK.exe` with PyInstaller, checks that it starts, zips the `AntiAFK` folder as
 `AntiAFK-v1.0.0-windows.zip` and publishes it as a GitHub release. Everyone's app then
 offers the update the next time it starts. Versions are compared as numbers, so always
-tag a higher version than the last one. Every pull request also builds the app; the ZIP
-is under **Artifacts** on the workflow run, for testing before a release.
+tag a higher version than the last one. Every pull request also builds the app; it's
+under **Artifacts** on the workflow run, for testing before a release.
+
+### How the automatic update works
+
+1. A few seconds after AntiAFK.exe starts, it asks GitHub for the latest release
+   ([`updater.py`](updater.py)). If that version is higher than its own and the release has
+   an `AntiAFK-v...-windows.zip`, a blue **Update to ...** button shows in the header.
+   Without internet nothing happens. **Settings → Check for updates** does the same on demand.
+2. Nothing installs by itself: the player clicks the button and confirms, so it never
+   restarts during a game.
+3. The app stops the bot, downloads the ZIP to a temporary folder and unpacks it, starts a
+   small helper script, and closes.
+4. The helper waits for the app to close, copies the new files over the `AntiAFK` folder
+   (`settings.json` and `matches.csv` are kept; a changed `rules.json` is saved as
+   `rules.json.bak`), starts the new version and deletes the temporary folder.
+
+If the folder can't be written to (for example under Program Files) or the download fails,
+the app says so and links to the release page. Running from source never updates itself, so
+anyone still on the Python version has to download the app once.
 
 # How it works
 
