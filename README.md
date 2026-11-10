@@ -255,7 +255,8 @@ also shows "SEARCHING FOR A MATCH" in its corner, so its rules (`report_victory`
 `report_defeat`, `report`) come before `searching`, and `searching` comes before
 `main_menu` so the bot never clicks QUICK PLAY while a search is running. If Hardcore is
 selected, the big play button says HARDCORE instead of QUICK PLAY; `main_menu_hardcore`
-clicks that one (the topmost HARDCORE, not the small tag on a mode tile). The report
+clicks that one. When the text to click appears more than once, the bot clicks the
+biggest one, so it's the big play button and not the small HARDCORE tag on a mode tile. The report
 records the match as a victory or defeat (in case the bot missed the banner), then the
 bot presses ESC to dismiss it.
 

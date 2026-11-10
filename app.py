@@ -720,7 +720,7 @@ class App:
                     else:
                         verdict = "No rule matches. The bot sends nothing on this screen.\n" \
                                   "To add one, pick a few words below that are only on this screen."
-                    words = "\n".join(f"  {text}" for text, _, _ in read['items'])
+                    words = "\n".join(f"  {text}" for text, *_ in read['items'])
                     result = f"{verdict}\n\nText on screen:\n{words}"
             except Exception as e:
                 result = f"Couldn't read the screen: {e}"

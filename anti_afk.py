@@ -422,7 +422,7 @@ def seen(read, phrase):
     if len(want) < 5:
         return False
     return any(difflib.SequenceMatcher(None, want, _letters(text)).ratio() >= 0.82
-               for text, _, _ in read['items'])
+               for text, *_ in read['items'])
 
 
 SUPPORTED_PYTHON = ((3, 11), (3, 14))  # what onnxruntime (used for text recognition) has builds for
@@ -448,7 +448,7 @@ _ocr_lock = threading.Lock()
 
 
 def ocr(image):
-    """Text on an image: [(text, (x, y) center, confidence)]."""
+    """Text on an image: [(text, (x, y) center, confidence, height in pixels)]."""
     global _ocr_engine
     import numpy
     with _ocr_lock:
@@ -463,7 +463,8 @@ def ocr(image):
             continue
         x = sum(p[0] for p in box) / 4
         y = sum(p[1] for p in box) / 4
-        items.append((text.strip(), (x, y), float(confidence)))
+        height = max(p[1] for p in box) - min(p[1] for p in box)
+        items.append((text.strip(), (x, y), float(confidence), float(height)))
     return items
 
 
@@ -474,24 +475,30 @@ def read_screen():
     image = grab((left, top, left + width, top + height))
     if image is None:
         return None
-    items = [(text, (round(left + x), round(top + y)), c) for text, (x, y), c in ocr(image)]
+    items = [(text, (round(left + x), round(top + y)), c, h) for text, (x, y), c, h in ocr(image)]
     return {'time': time.monotonic(), 'items': items,
-            'text': ' | '.join(text for text, _, _ in items)}
+            'text': ' | '.join(text for text, *_ in items)}
+
+
+BIG_TEXT = 0.8  # text at least this fraction of the biggest match's height counts as "big"
 
 
 def find_text(read, phrase):
     """Screen position of the OCR item that best matches `phrase`, or None.
-    Prefers an item that is just that phrase (a button) over one that contains it."""
+    Prefers the biggest text (the big play button, not a small tag on a mode tile that
+    says the same), then an item that is just that phrase over one that contains it."""
     pattern = phrase_pattern(phrase)
-    best = None
-    for text, pos, _ in read['items']:
+    matches = []
+    for text, pos, _, height in read['items']:
         m = pattern.search(text)
-        if not m:
-            continue
-        extra = len(text) - (m.end() - m.start())  # how much else is in this item
-        if best is None or extra < best[0]:
-            best = (extra, pos)
-    return best[1] if best else None
+        if m:
+            extra = len(text) - (m.end() - m.start())  # how much else is in this item
+            matches.append((height, extra, pos))
+    if not matches:
+        return None
+    biggest = max(height for height, _, _ in matches)
+    big = [(extra, pos) for height, extra, pos in matches if height >= BIG_TEXT * biggest]
+    return min(big, key=lambda m: m[0])[1]
 
 
 def screen_action(screen):
