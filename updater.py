@@ -74,6 +74,42 @@ def _get(url, accept='application/vnd.github+json'):
     return urllib.request.urlopen(request, timeout=TIMEOUT)
 
 
+def restore_bo6_profile(profiles_dir):
+    """Restore the released BO6 profile if the updater skipped it."""
+    filename = 'cod24-cod.exe.json'
+    target = os.path.join(profiles_dir, filename)
+    if os.path.exists(target):
+        return False
+    bundled = os.path.join(getattr(sys, '_MEIPASS', ''), 'profiles', filename)
+    if os.path.isfile(bundled):
+        with open(bundled, 'rb') as f:
+            payload = f.read()
+    else:
+        url = f'https://raw.githubusercontent.com/{REPO}/refs/tags/v{VERSION}/profiles/{filename}'
+        with _get(url, accept='application/json') as response:
+            payload = response.read(65537)
+    if len(payload) > 65536:
+        raise ValueError('BO6 rules profile is too large')
+    data = json.loads(payload)
+    if not isinstance(data, dict) or not isinstance(data.get('screens'), list) or not data['screens']:
+        raise ValueError('BO6 rules profile has no screens')
+
+    os.makedirs(profiles_dir, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=profiles_dir, delete=False) as f:
+            temporary = f.name
+            f.write(payload)
+        try:
+            os.rename(temporary, target)  # Windows refuses to replace a file created meanwhile.
+        except FileExistsError:
+            return False
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
+    return True
+
+
 def pick_update(release, current=VERSION):
     """The update in a GitHub release (API JSON), or None if it's not newer or has no ZIP."""
     latest, have = parse_version(release.get('tag_name')), parse_version(current)

@@ -3,15 +3,38 @@
 The test that runs the update script itself only runs on Windows (it needs cmd and robocopy).
 """
 import os
+import io
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
 import zipfile
+from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import updater  # noqa: E402
+
+
+class RestoreProfile(unittest.TestCase):
+    def test_downloads_missing_profile_for_the_installed_version(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            profiles = Path(temporary) / 'profiles'
+            payload = b'{"screens":[{"name":"loadouts"}]}'
+            with (patch.object(updater.sys, '_MEIPASS', temporary, create=True),
+                  patch.object(updater, 'VERSION', '1.1.1'),
+                  patch.object(updater, '_get', return_value=io.BytesIO(payload)) as get):
+                self.assertFalse(profiles.exists())
+                self.assertTrue(updater.restore_bo6_profile(profiles))
+                target = profiles / 'cod24-cod.exe.json'
+                self.assertEqual(target.read_bytes(), payload)
+                target.write_bytes(b'customized rules')
+                self.assertFalse(updater.restore_bo6_profile(profiles))
+                self.assertEqual(target.read_bytes(), b'customized rules')
+            get.assert_called_once_with(
+                f'https://raw.githubusercontent.com/{updater.REPO}/refs/tags/v1.1.1/profiles/cod24-cod.exe.json',
+                accept='application/json')
 
 
 def release(tag, *names):

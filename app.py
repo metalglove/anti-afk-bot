@@ -304,6 +304,12 @@ class App:
         self.history_games = {}
         self.seen_last_match = None
         sys.stdout = sys.stderr = QueueWriter(self.log_queue)
+        if updater.is_app_build():
+            try:
+                if updater.restore_bo6_profile(bot.PROFILES_DIR):
+                    print("Restored the missing Black Ops 6 rules profile.")
+            except (OSError, ValueError) as e:
+                print(f"Couldn't restore the Black Ops 6 rules profile: {e}")
         try:
             bot.migrate_history()
         except OSError as e:
@@ -999,6 +1005,8 @@ class App:
 def self_test():
     """Checks the built app can load everything it needs (used by the release build)."""
     from PIL import Image, ImageDraw
+    if updater.is_app_build():
+        updater.restore_bo6_profile(bot.PROFILES_DIR)
     problem = bot.text_recognition_problem()
     if problem:
         raise SystemExit(problem)

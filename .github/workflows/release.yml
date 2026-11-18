@@ -45,6 +45,7 @@ jobs:
         run: >
           pyinstaller app.py --name AntiAFK --windowed --noconfirm --clean
           --icon assets/icon.ico --add-data "assets/icon.ico;assets"
+          --add-data "profiles;profiles"
           --hidden-import version
           --hidden-import pynput.keyboard._win32 --hidden-import pynput.mouse._win32
           --collect-all rapidocr_onnxruntime --collect-all onnxruntime
@@ -60,10 +61,13 @@ jobs:
       - name: Check the app starts
         shell: pwsh
         run: |
+          Move-Item dist/AntiAFK/profiles/cod24-cod.exe.json $env:RUNNER_TEMP/cod24-cod.exe.json
           $p = Start-Process dist/AntiAFK/AntiAFK.exe -ArgumentList '--self-test' -Wait -PassThru
           Get-Content dist/AntiAFK/self-test.log
           Remove-Item dist/AntiAFK/self-test.log
           if ($p.ExitCode -ne 0) { exit 1 }
+          if ((Get-FileHash dist/AntiAFK/profiles/cod24-cod.exe.json).Hash -ne
+              (Get-FileHash $env:RUNNER_TEMP/cod24-cod.exe.json).Hash) { exit 1 }
 
       - name: Zip
         shell: pwsh
