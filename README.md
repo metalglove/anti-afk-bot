@@ -49,8 +49,10 @@ You only have to do this once (and once more after an update, sometimes).
 | F8 | Pause / resume the bot |
 | F9 | Stop the bot |
 
-The game is set to `cod.exe`. For another game, open **Settings**, click **Detect** and
-then click on the game window.
+With **Settings → Game** blank, the bot selects the first supported game you bring to
+the foreground after starting. It pauses when that game loses focus. Stop and start
+again to switch games. You can enter an executable to restrict detection to that game.
+Older settings that saved `cod.exe` as the default switch to automatic detection on upgrade.
 
 ### Updates
 
@@ -77,16 +79,20 @@ Your settings and match history are kept. You can also check yourself under
 ## The app
 
 The app has four pages: **Dashboard** (what the bot is doing right now, a live state
-diagram, stats and the activity log), **History** (every recorded match), **Screens** (the
+diagram, stats and the activity log), **History** (recorded matches and totals by game), **Screens** (the
 known screens from `rules.json`, and **Read screen** to check one) and **Settings** (game,
 start delay, menu read interval, and whether it runs as administrator). Settings are
 remembered between runs.
 
-Prefer the terminal? `python anti_afk.py` does the same. The game defaults to `cod.exe`
-(`--game` for another one, `--help` for options, `--test` for test mode).
+On first launch, existing match records are assigned to **MW4** (`cod.exe`).
+New matches record the detected game's executable in `matches.csv`.
+
+Prefer the terminal? `python anti_afk.py` detects the game automatically. Use
+`--game cod.exe` to select it explicitly, `--help` for options, or `--test` for test mode.
 
 An update replaces `rules.json` with the one from the new version. If you had changed
 yours, the old one is saved as `rules.json.bak` next to it.
+Updates also back up edited profiles they replace and keep profiles you added.
 
 ## Running from source (for developers)
 
@@ -221,6 +227,30 @@ moment after the menu closes. Run `python anti_afk.py --show-menu` and open a fe
 to check that it says `MENU` there and `playing` in a match.
 
 ### Which menu is it? (rules.json)
+
+`cod.exe` uses `rules.json`. Other games use `profiles/<executable>.json`, with their
+own ordered screen rules and purchase-screen phrases. For example,
+`profiles/cod24-cod.exe.json` selects **Find a Match** in the Black Ops 6 Multiplayer
+lobby. On Quick Play, it queues **Face Off Moshpit** when available and falls back to
+**Find a Match**. Both options lead to **Searching for a Match**, where the bot waits.
+This profile recognizes those screens even when the game hides the cursor.
+On recognized click menus, it moves the cursor back and forth by three pixels
+to keep it visible.
+The bot also waits during lobby voting, the match countdown, map loading, and
+Killcam. It dismisses the inactivity notice with **Exit** and records the kick.
+If the match opens the Loadouts menu, the bot clicks **Default**, then **Enforcer**
+in the loadout list. If the game spawns directly, the bot looks for the minimap compass
+before entering gameplay. The score status and timer are a fallback in modes that show them.
+The bot records **Victory**, **Defeat**, or **Tie**, waits through **Best Play** and **Winner's Circle**, and
+dismisses **Progression** with **Esc** when the dismiss prompt appears.
+It waits through the **After Action Report** and automatic lobby countdown.
+Use **Screens → Read screen** or
+`python anti_afk.py --game cod24-cod.exe --read-screen`, then switch to the game
+within three seconds to capture its OCR text.
+
+For additional profiles, mark a screen with `"pre_match": true` if it leads into a
+new match. Use `"match_result"` with `"victory"`, `"defeat"`, `"tie"`, `"over"`, `"left"`, or
+`"kicked"` to record an outcome. The existing `cod.exe` rules retain their defaults.
 
 While a menu is open, the bot takes a screenshot of the game window and reads the text on
 it: as soon as the menu opens, right after each click, and every 3 seconds in between

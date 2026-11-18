@@ -73,9 +73,11 @@ class UpdateScript(unittest.TestCase):
             app = os.path.join(tmp, 'My Apps', 'AntiAFK é')
             files = {
                 new: {'AntiAFK.exe': 'new exe', 'rules.json': 'new rules', '_internal/lib.dll': 'new lib',
+                      'profiles/cod24-cod.exe.json': 'new profile',
                       # stands in for AntiAFK.exe, so the test can see that it was started
                       'launch.cmd': f'@echo started> "{os.path.join(tmp, "started.txt")}"'},
                 app: {'AntiAFK.exe': 'old exe', 'rules.json': 'my rules', '_internal/lib.dll': 'old lib',
+                      'profiles/cod24-cod.exe.json': 'my profile', 'profiles/custom.exe.json': 'custom profile',
                       '_internal/stale.dll': 'old', 'settings.json': 'my settings', 'matches.csv': 'my matches'},
             }
             for root, content in files.items():
@@ -95,6 +97,9 @@ class UpdateScript(unittest.TestCase):
             self.assertEqual(read('AntiAFK.exe'), 'new exe')
             self.assertEqual(read('rules.json'), 'new rules')
             self.assertEqual(read('rules.json.bak'), 'my rules')
+            self.assertEqual(read('profiles/cod24-cod.exe.json'), 'new profile')
+            self.assertEqual(read('profiles/cod24-cod.exe.json.bak'), 'my profile')
+            self.assertEqual(read('profiles/custom.exe.json'), 'custom profile')
             self.assertEqual(read('_internal/lib.dll'), 'new lib')
             self.assertFalse(os.path.exists(os.path.join(app, '_internal', 'stale.dll')))
             self.assertEqual(read('settings.json'), 'my settings')

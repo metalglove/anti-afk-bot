@@ -54,6 +54,7 @@ jobs:
         shell: bash
         run: |
           cp rules.json dist/AntiAFK/
+          cp -r profiles dist/AntiAFK/
           cp README.md dist/AntiAFK/README.txt
 
       - name: Check the app starts

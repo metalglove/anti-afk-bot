@@ -26,7 +26,7 @@ import updater
 
 HERE = bot.APP_DIR
 SETTINGS_FILE = os.path.join(HERE, 'settings.json')
-DEFAULTS = {'game': 'cod.exe', 'delay': 5,
+DEFAULTS = {'game': '', 'delay': 5,
             'read_interval': bot.READ_INTERVAL}
 
 # Colors (dark theme).
@@ -77,7 +77,10 @@ def load_settings():
     try:
         with open(SETTINGS_FILE) as f:
             settings = {**DEFAULTS, **json.load(f)}
-        settings['game'] = settings['game'] or DEFAULTS['game']  # an empty game means the default
+        game = (settings['game'] or '').strip()
+        if 'game_mode' not in settings and game.lower() == bot.DEFAULT_GAME:
+            game = ''
+        settings['game'] = bot.game_from_title(game) or game
         return settings
     except (OSError, ValueError):
         return dict(DEFAULTS)
@@ -124,31 +127,66 @@ class FlowDiagram:
              ('menu', 'resume')]  # unknown menus can come from anywhere
     SIDE = [(bot.STARTING, "Starting"), (bot.PAUSED, "Paused (F8)"),
             (bot.NOT_FOCUSED, "Not focused"), (bot.STOPPED, "Stopped (F9)")]
-    SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over',
+    SCREEN_NODE = {'lobby_found': 'lobby', 'victory': 'over', 'defeat': 'over', 'tie': 'over',
                    'best_play': 'over', 'post_match': 'over', 'main_menu_hardcore': 'main_menu',
                    'report_victory': 'report', 'report_defeat': 'report'}
+    BO6_NODES = {
+        'multiplayer_lobby': (90, 50, "Multiplayer lobby", "Find a Match"),
+        'quick_play': (270, 50, "Quick Play", "prefer Face Off Moshpit"),
+        'searching': (450, 50, "Searching", "wait for a match"),
+        'match_lobby': (630, 50, "Match lobby", "wait for countdown"),
+        'killcam': (90, 165, "Killcam", "wait"),
+        'play': (270, 165, "Playing", "gameplay input"),
+        'loadouts': (450, 165, "Optional loadouts", "Default → Enforcer"),
+        'loading_map': (630, 165, "Loading map", "wait"),
+        'kicked': (90, 280, "Kicked", "click Exit"),
+        'over': (270, 280, "Match over", "Best Play / Winner’s Circle"),
+        'progression': (450, 280, "Progression", "press Esc"),
+        'after_action_report': (630, 280, "After Action Report", "wait for lobby"),
+    }
+    BO6_EDGES = [
+        ('multiplayer_lobby', 'quick_play'), ('quick_play', 'searching'),
+        ('searching', 'match_lobby'), ('match_lobby', 'loading_map'),
+        ('loading_map', 'loadouts'), ('loadouts', 'play'),
+        ('play', 'killcam'), ('play', 'over'), ('play', 'kicked'),
+        ('over', 'progression'), ('progression', 'after_action_report'),
+    ]
+    BO6_SCREEN_NODE = {
+        'quick_play_face_off': 'quick_play',
+        'loadouts_custom': 'loadouts', 'loadouts_default': 'loadouts',
+        'victory': 'over', 'defeat': 'over', 'tie': 'over',
+        'best_play': 'over', 'post_match': 'over',
+        'winners_circle': 'over', 'winners_circle_defeat': 'over',
+        'winners_circle_victory': 'over', 'winners_circle_tie': 'over',
+    }
     NODE_W, NODE_H = 150, 56
 
     def __init__(self, parent):
         self.canvas = tk.Canvas(parent, bg=CARD, highlightthickness=0, height=200)
         self.canvas.bind('<Configure>', lambda e: self.draw())
         self.active, self.color, self.other = None, ACCENT, ''
+        self.game = None
 
-    def show(self, state_name, detail, color):
+    def show(self, state_name, detail, color, game=None):
+        bo6 = game == 'cod24-cod.exe'
+        nodes = self.BO6_NODES if bo6 else self.NODES
         if state_name == bot.PLAYING:
             active = 'play'
         elif state_name == bot.RESUMING:
-            active = 'resume'
+            active = 'play' if bo6 else 'resume'
         elif state_name == bot.MENU:
             active = 'menu'
         elif state_name == bot.SCREEN:
             screen = detail.split(' (')[0]
-            active = self.SCREEN_NODE.get(screen, screen)
+            screen_nodes = self.BO6_SCREEN_NODE if bo6 else self.SCREEN_NODE
+            active = screen_nodes.get(screen, screen)
         else:
             active = state_name
-        other = detail.split(' (')[0] if state_name == bot.SCREEN and active not in self.NODES else ''
-        if (active, color, other) != (self.active, self.color, self.other):
-            self.active, self.color, self.other = active, color, other
+        other = detail.split(' (')[0] if state_name == bot.SCREEN and active not in nodes else ''
+        if bo6 and state_name == bot.MENU:
+            other = 'Menu'
+        if (active, color, other, game) != (self.active, self.color, self.other, self.game):
+            self.active, self.color, self.other, self.game = active, color, other, game
             self.draw()
 
     @staticmethod
@@ -169,9 +207,12 @@ class FlowDiagram:
         title_font = tkfont.Font(family=FONT, size=-max(9, round(15 * k)), weight='bold')
         sub_font = tkfont.Font(family=FONT, size=-max(8, round(12 * k)))
         dim = '#3a4150'
+        bo6 = self.game == 'cod24-cod.exe'
+        nodes = self.BO6_NODES if bo6 else self.NODES
+        edges = self.BO6_EDGES if bo6 else self.EDGES
 
         def center(key):
-            x, y = self.NODES[key][:2]
+            x, y = nodes[key][:2]
             return ox + x * k, oy + y * k
 
         def border_point(key, toward, gap=4):
@@ -184,14 +225,14 @@ class FlowDiagram:
                         (h + gap) / abs(dy) if dy else float('inf'))
             return x + dx * scale, y + dy * scale
 
-        for a, b in self.EDGES:
+        for a, b in edges:
             start, end = border_point(a, center(b)), border_point(b, center(a))
             lit = a == self.active
             c.create_line(*start, *end, arrow='last', arrowshape=(8 * k, 10 * k, 4 * k),
                           width=max(1.5, (2.5 if lit else 1.5) * k),
                           fill=self.color if lit else dim)
 
-        for key, (x, y, title, action) in self.NODES.items():
+        for key, (x, y, title, action) in nodes.items():
             x, y = ox + x * k, oy + y * k
             lit = key == self.active
             self.rounded(c, x - w, y - h, x + w, y + h, 10 * k,
@@ -202,7 +243,7 @@ class FlowDiagram:
 
         # States that can happen at any time.
         y = oy + 352 * k
-        x = ox + (self.NODES['kicked'][0] - self.NODE_W / 2) * k
+        x = ox + (nodes['kicked'][0] - self.NODE_W / 2) * k
         c.create_text(x, y, text="Any time", anchor='w', fill=MUTED, font=sub_font)
         x += sub_font.measure("Any time") + 12 * k
         side = list(self.SIDE)
@@ -259,9 +300,14 @@ class App:
         self.busy_reading = False
         self.stopping = False
         self.run_seconds = 0.0
-        self.history_total = 0.0
+        self.history_totals = {}
+        self.history_games = {}
         self.seen_last_match = None
         sys.stdout = sys.stderr = QueueWriter(self.log_queue)
+        try:
+            bot.migrate_history()
+        except OSError as e:
+            print(f"Couldn't update match history: {e}")
 
         settings = load_settings()
         self.game = tk.StringVar(value=settings['game'])
@@ -304,7 +350,7 @@ class App:
         # Plain tk frame: an empty CTkFrame falls back to 200x200 when no warning shows.
         self.warnings = tk.Frame(header, bg=BG)
         self.warnings.grid(row=0, column=2, sticky='e')
-        self.game_chip = chip(self.warnings, "⚠ No game set (Settings)", '#422006', '#fcd34d')
+        self.game_chip = chip(self.warnings, "Automatic game detection", NEUTRAL, TEXT)
         self.game_chip.bind('<Button-1>', lambda e: self.tabs.set("Settings"))
         self.update_chip = chip(self.warnings, "", '#1e3a8a', '#bfdbfe')
         self.update_chip.configure(cursor='hand2')
@@ -410,12 +456,13 @@ class App:
         tab.grid_rowconfigure(1, weight=1)
         summary = card(tab)
         summary.grid(row=0, column=0, sticky='we', pady=(0, 8))
-        summary.grid_columnconfigure((0, 1, 2), weight=1, uniform='hist')
+        summary.grid_columnconfigure(tuple(range(6)), weight=1, uniform='hist')
         self.hist_values = {}
         for i, (key, label) in enumerate([('total', "Total match time"), ('count', "Matches recorded"),
-                                          ('average', "Average match")]):
+                                          ('average', "Average match"), ('victory', "Wins"),
+                                          ('defeat', "Losses"), ('tie', "Ties")]):
             box = ctk.CTkFrame(summary, fg_color=BG, corner_radius=10)
-            box.grid(row=0, column=i, sticky='we', padx=(16 if i == 0 else 4, 16 if i == 2 else 4), pady=14)
+            box.grid(row=0, column=i, sticky='we', padx=(16 if i == 0 else 4, 16 if i == 5 else 4), pady=14)
             value = ctk.CTkLabel(box, text="–", text_color=TEXT, font=ctk.CTkFont(FONT, 24, 'bold'))
             value.pack(anchor='w', padx=14, pady=(10, 0))
             ctk.CTkLabel(box, text=label, text_color=MUTED, font=ctk.CTkFont(FONT, 12)).pack(
@@ -431,10 +478,13 @@ class App:
         top.grid_columnconfigure(0, weight=1)
         heading(top, "Matches").grid(row=0, column=0, sticky='w')
         ctk.CTkButton(top, text="Open matches.csv", width=130, height=28, corner_radius=8, fg_color=NEUTRAL,
-                      hover_color=NEUTRAL_HOVER, command=self.open_history).grid(row=0, column=1)
+                      hover_color=NEUTRAL_HOVER, command=self.open_history).grid(row=0, column=2)
+        self.history_filter = ctk.CTkOptionMenu(top, values=["All games"], width=170,
+                                               command=lambda _: self.refresh_history())
+        self.history_filter.grid(row=0, column=1, padx=(0, 8))
         cols = ctk.CTkFrame(table, fg_color='transparent')
         cols.grid(row=1, column=0, sticky='we', padx=24)
-        for i, (text, weight) in enumerate((("Started", 3), ("Duration", 2), ("Result", 2))):
+        for i, (text, weight) in enumerate((("Started", 3), ("Duration", 2), ("Result", 2), ("Game", 3))):
             cols.grid_columnconfigure(i, weight=weight, uniform='cols')
             ctk.CTkLabel(cols, text=text, text_color=MUTED, anchor='w',
                          font=ctk.CTkFont(FONT, 12, 'bold')).grid(row=0, column=i, sticky='w')
@@ -445,11 +495,23 @@ class App:
 
     def refresh_history(self):
         rows = bot.load_history()
-        self.history_total = sum(r['duration'] for r in rows)
-        self.hist_values['total'].configure(text=bot.format_duration(self.history_total))
+        self.history_totals = {}
+        for row in rows:
+            exe = row['game']
+            self.history_totals[exe] = self.history_totals.get(exe, 0.0) + row['duration']
+        self.history_games = {bot.GAME_NAMES.get(exe, exe): exe
+                              for exe in sorted(set(bot.game_profiles()) | self.history_totals.keys())}
+        self.history_filter.configure(values=["All games", *self.history_games])
+        selected = self.history_games.get(self.history_filter.get())
+        if selected:
+            rows = [row for row in rows if row['game'] == selected]
+        history_total = sum(row['duration'] for row in rows)
+        self.hist_values['total'].configure(text=bot.format_duration(history_total))
         self.hist_values['count'].configure(text=str(len(rows)))
         self.hist_values['average'].configure(
-            text=bot.format_duration(self.history_total / len(rows)) if rows else '–')
+            text=bot.format_duration(history_total / len(rows)) if rows else '–')
+        for result in ('victory', 'defeat', 'tie'):
+            self.hist_values[result].configure(text=str(sum(row['result'] == result for row in rows)))
         for child in self.history_list.winfo_children():
             child.destroy()
         if not rows:
@@ -460,13 +522,15 @@ class App:
         for i, r in enumerate(reversed(rows[-200:])):
             row = ctk.CTkFrame(self.history_list, fg_color=BG if i % 2 == 0 else 'transparent', corner_radius=8)
             row.grid(row=i, column=0, sticky='we', padx=4, pady=1)
-            for c, weight in enumerate((3, 2, 2)):
+            for c, weight in enumerate((3, 2, 2, 3)):
                 row.grid_columnconfigure(c, weight=weight, uniform='cols')
             ctk.CTkLabel(row, text=r['date'], text_color=TEXT, anchor='w').grid(row=0, column=0, sticky='w', padx=12, pady=4)
             ctk.CTkLabel(row, text=bot.format_duration(r['duration']), text_color=TEXT, anchor='w',
                          font=ctk.CTkFont(MONO, 13)).grid(row=0, column=1, sticky='w', padx=12)
             ctk.CTkLabel(row, text=r['result'], text_color=colors.get(r['result'], MUTED), anchor='w',
                          font=ctk.CTkFont(FONT, 13, 'bold')).grid(row=0, column=2, sticky='w', padx=12)
+            ctk.CTkLabel(row, text=bot.GAME_NAMES.get(r['game'], r['game']),
+                         text_color=TEXT, anchor='w').grid(row=0, column=3, sticky='w', padx=12)
 
     def open_history(self):
         try:
@@ -491,7 +555,7 @@ class App:
         heading(top, "Known screens").grid(row=0, column=0, sticky='w')
         ctk.CTkButton(top, text="Reload", width=70, height=28, corner_radius=8, fg_color=NEUTRAL,
                       hover_color=NEUTRAL_HOVER, command=self.refresh_screens).grid(row=0, column=1, padx=(0, 6))
-        ctk.CTkButton(top, text="Edit rules.json", width=120, height=28, corner_radius=8, fg_color=ACCENT,
+        ctk.CTkButton(top, text="Edit rules", width=120, height=28, corner_radius=8, fg_color=ACCENT,
                       hover_color=ACCENT_HOVER, command=self.edit_rules).grid(row=0, column=2)
         ctk.CTkLabel(rules_card, text="When a menu is open, the bot reads the text on screen. A screen "
                                       "matches when all of its words are visible; the bot then clicks "
@@ -550,7 +614,7 @@ class App:
         def game_widget(parent):
             frame = ctk.CTkFrame(parent, fg_color='transparent')
             ctk.CTkEntry(frame, textvariable=self.game, width=220, height=34,
-                         placeholder_text="e.g. cod.exe").pack(side='left')
+                         placeholder_text="Automatic").pack(side='left')
             self.detect_btn = ctk.CTkButton(frame, text="Detect", width=80, height=34, fg_color=NEUTRAL,
                                             hover_color=NEUTRAL_HOVER, command=self.detect_game)
             self.detect_btn.pack(side='left', padx=(8, 0))
@@ -562,8 +626,8 @@ class App:
         def switch(var):
             return lambda parent: ctk.CTkSwitch(parent, text="", variable=var, progress_color=ACCENT)
 
-        setting("Game", "The game's program name. Input only goes out while this window is in front. "
-                        "Press Detect, then click on the game within 3 seconds.", game_widget)
+        setting("Game", "Leave blank to detect a supported game when starting. Enter an executable "
+                        "name to select it explicitly, or use Detect.", game_widget)
         setting("Start delay (seconds)", "Time to switch to the game after pressing Start.", number(self.delay))
         setting("Menu read interval (seconds)", "How often the screen is read while a menu stays open. "
                                                 "It also reads right when a menu opens and after each click.",
@@ -604,7 +668,8 @@ class App:
             return default
 
     def save_settings(self):
-        data = {'game': self.game.get().strip(),
+        game = self.game.get().strip()
+        data = {'game': game, 'game_mode': 'manual' if game else 'automatic',
                 'delay': max(0, self.number(self.delay, 5, int)),
                 'read_interval': max(0.5, self.number(self.read_interval, 3.0))}
         try:
@@ -640,7 +705,7 @@ class App:
 
         def later():
             exe, title = bot.foreground_window()
-            value = exe or title
+            value = exe or bot.game_from_title(title)
             if value and 'python' not in value.lower():
                 self.root.after(0, self.game.set, value)
                 print(f"Game set to {value}.")
@@ -649,14 +714,23 @@ class App:
             self.root.after(0, lambda: self.detect_btn.configure(text="Detect", state='normal'))
         self.root.after(3000, lambda: threading.Thread(target=later, daemon=True).start())
 
+    def screens_path(self):
+        if bot.is_started() and bot.active_rules_file:
+            return bot.active_rules_file
+        game = self.game.get().strip()
+        return bot.profile_path(game) if game else bot.RULES_FILE
+
     def refresh_screens(self):
-        bot.rules = bot.load_rules()
+        path = self.screens_path()
+        self.displayed_rules_selection = self.rules_selection()
+        rules = bot.load_rules(path) if path else {'screens': [], 'never_click_if_seen': []}
         for child in self.screen_list.winfo_children():
             child.destroy()
-        if not bot.rules['screens']:
-            ctk.CTkLabel(self.screen_list, text="No screens in rules.json. Every menu stays paused.",
+        if not rules['screens']:
+            message = f"No screens in {os.path.basename(path)}." if path else "No profile for this game."
+            ctk.CTkLabel(self.screen_list, text=message,
                          text_color=MUTED).grid(row=0, column=0, sticky='w', padx=8, pady=8)
-        for i, screen in enumerate(bot.rules['screens']):
+        for i, screen in enumerate(rules['screens']):
             row = ctk.CTkFrame(self.screen_list, fg_color=BG, corner_radius=10)
             row.grid(row=i, column=0, sticky='we', pady=4, padx=4)
             row.grid_columnconfigure(0, weight=1)
@@ -672,18 +746,22 @@ class App:
             else:
                 c = chip(row, "wait", NEUTRAL_HOVER)
             c.grid(row=0, column=1, rowspan=2, padx=14)
-        never = bot.rules['never_click_if_seen']
+        never = rules['never_click_if_seen']
         self.never_label.configure(text=("⛔ Never clicks while any of these is on screen: " + ", ".join(never))
                                    if never else "")
 
     def edit_rules(self):
+        path = self.screens_path()
+        if not path:
+            print("No rules profile for the selected game.")
+            return
         try:
-            os.startfile(bot.RULES_FILE)  # Windows: opens in the default editor
-            print("Opened rules.json. Press Reload on the Screens tab after saving.")
+            os.startfile(path)  # Windows: opens in the default editor
+            print(f"Opened {os.path.basename(path)}. Restart the bot to apply rule changes.")
         except AttributeError:
-            print(f"Edit {bot.RULES_FILE} in a text editor, then press Reload.")
+            print(f"Edit {path} in a text editor, then restart the bot.")
         except OSError as e:
-            print(f"Couldn't open {bot.RULES_FILE}: {e}")
+            print(f"Couldn't open {path}: {e}")
 
     def set_read_result(self, text):
         self.read_result.configure(state='normal')
@@ -698,21 +776,24 @@ class App:
         self.busy_reading = True
         self.read_btn.configure(text="Switch to the game…")
         self.set_read_result("Reading in 3 seconds. Switch to the game now.")
+        game = self.game.get().strip()
 
         def run():
             try:
                 time.sleep(3)
-                bot.rules = bot.load_rules()
+                path = bot.foreground_profile_path(game)
                 read = bot.read_screen()
                 if read is None:
                     result = "Couldn't capture the screen. Use borderless or windowed mode."
                 else:
-                    screen, danger = bot.classify(read)
-                    if danger:
+                    screen, danger = bot.classify(read, screen_rules=bot.load_rules(path)) if path else (None, None)
+                    if not path:
+                        verdict = "No rules profile for the foreground window."
+                    elif danger:
                         verdict = f"⛔ '{danger}' is on screen: the bot never clicks here."
                     elif screen and screen['click']:
                         verdict = f"✔ Screen '{screen['name']}': clicks '{screen['click']}' at " \
-                                  f"{bot.find_text(read, screen['click'])}."
+                                  f"{bot.screen_click_target(read, screen)}."
                     elif screen and screen['press']:
                         verdict = f"✔ Screen '{screen['name']}': presses {screen['press'].upper()}."
                     elif screen:
@@ -721,7 +802,8 @@ class App:
                         verdict = "No rule matches. The bot sends nothing on this screen.\n" \
                                   "To add one, pick a few words below that are only on this screen."
                     words = "\n".join(f"  {text}" for text, *_ in read['items'])
-                    result = f"{verdict}\n\nText on screen:\n{words}"
+                    profile = f"Profile: {os.path.basename(path)}\n" if path else ""
+                    result = f"{profile}{verdict}\n\nText on screen:\n{words}"
             except Exception as e:
                 result = f"Couldn't read the screen: {e}"
             self.root.after(0, self.set_read_result, result)
@@ -842,16 +924,26 @@ class App:
         if running and s['started'] is not None:
             self.run_seconds = time.monotonic() - s['started']
         last = s['last_match']
+        game = bot.active_game or self.configured_game()
         values = {'running': bot.format_duration(self.run_seconds) if s['started'] else '–',
                   'match_time': bot.format_duration(s['match_time'] + current),
-                  'total': bot.format_duration(self.history_total + current),
+                  'total': bot.format_duration(self.history_totals.get(game, 0) + current) if game else '–',
                   'matches': str(s['matches']),
                   'last': f"{bot.format_duration(last[1])} · {last[0]}" if last else '–',
                   'kicks': str(s['kicks'])}
         for key, value in values.items():
             self.stat_values[key].configure(text=value)
 
+    def rules_selection(self):
+        return self.game.get(), bot.active_rules_file if bot.is_started() else None
+
+    def configured_game(self):
+        game = self.game.get().strip().lower()
+        return game.removesuffix('.exe') + '.exe' if game else None
+
     def poll(self):
+        if self.rules_selection() != self.displayed_rules_selection:
+            self.refresh_screens()
         self.flush_log()
 
         # A crash or F9 sets stop_event; finish stopping cleanly.
@@ -875,13 +967,18 @@ class App:
         else:
             self.test_badge.grid_remove()
         self.root.title(f"Anti-AFK · {name.title()}")
-        self.flow.show(name, detail, color)
+        game = bot.active_game or self.configured_game()
+        self.flow.show(name, detail, color, game)
         self.update_stats(running)
 
-        # Warnings in the header.
-        if self.game.get().strip():
-            self.game_chip.pack_forget()
+        if running and bot.active_game:
+            game_status = f"{bot.GAME_NAMES.get(game, game)} · Detected"
+        elif game and not running:
+            game_status = bot.GAME_NAMES.get(game, game)
         else:
+            game_status = "Waiting for game" if running else "Automatic game detection"
+        self.game_chip.configure(text=game_status)
+        if not self.game_chip.winfo_manager():
             self.game_chip.pack(side='left', padx=4)
 
         # Buttons.
@@ -911,6 +1008,9 @@ def self_test():
     rules = bot.load_rules()
     if not rules['screens']:
         raise SystemExit(f"No screens loaded from {bot.RULES_FILE}")
+    bo6_profile = bot.profile_path('cod24-cod.exe')
+    if not bo6_profile or not bot.load_rules(bo6_profile)['screens']:
+        raise SystemExit("Black Ops 6 rules profile is missing or empty.")
     root = ctk.CTk()  # the window toolkit and its theme files load
     icon = os.path.join(getattr(sys, '_MEIPASS', HERE), 'assets', 'icon.ico')
     root.iconbitmap(icon)
