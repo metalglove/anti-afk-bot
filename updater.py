@@ -29,6 +29,8 @@ KEEP_FILES = ('settings.json', 'matches.csv')  # the user's own files, never rep
 TIMEOUT = 15
 
 # Run by cmd with: pid, new files folder, app folder, temp folder, exe name.
+# robocopy /IS /IT: copy every file, even one whose size and time match the old one
+# (robocopy would otherwise skip it as unchanged).
 # Arguments (not text in the script) so folder names with accents work.
 UPDATE_SCRIPT = r"""@echo off
 setlocal
@@ -41,8 +43,8 @@ ping -n 2 127.0.0.1 >nul
 goto wait
 :copy
 if exist "%~3\rules.json" (fc /b "%~3\rules.json" "%~2\rules.json" >nul 2>nul || copy /y "%~3\rules.json" "%~3\rules.json.bak" >nul)
-robocopy "%~2\_internal" "%~3\_internal" /MIR /R:10 /W:1 /NFL /NDL /NJH /NJS >nul
-robocopy "%~2" "%~3" /R:10 /W:1 /XD _internal /XF settings.json matches.csv /NFL /NDL /NJH /NJS >nul
+robocopy "%~2\_internal" "%~3\_internal" /MIR /IS /IT /R:10 /W:1 /NFL /NDL /NJH /NJS >nul
+robocopy "%~2" "%~3" /IS /IT /R:10 /W:1 /XD _internal /XF settings.json matches.csv /NFL /NDL /NJH /NJS >nul
 start "" "%~3\%~5"
 (goto) 2>nul & rmdir /s /q "%~4"
 """
