@@ -90,12 +90,15 @@ yours, the old one is saved as `rules.json.bak` next to it.
 
 ## Running from source (for developers)
 
-Needs Python 3.11 to 3.14 (3.13 recommended; 3.15 doesn't work yet because onnxruntime has
-no build for it):
+Use 64-bit Python 3.12 on Windows, the same version used by CI. From the repository
+root in PowerShell, create a virtual environment, install the pinned dependencies,
+run the tests, and start the app.
 
-```
-py -3.13 -m pip install -r requirements.txt
-py -3.13 app.py
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover tests -v
+.\.venv\Scripts\python.exe app.py
 ```
 
 Running from source doesn't update itself; use `git pull`.
