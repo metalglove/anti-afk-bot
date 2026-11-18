@@ -1,0 +1,76 @@
+{
+  "ocr_menus": true,
+  "gameplay_hud": true,
+  "keep_menu_cursor_visible": true,
+  "never_click_if_seen": [
+    "PURCHASE", "BUY", "CHECKOUT", "COD POINTS", "ADD TO CART",
+    "UPGRADE TO", "VAULT EDITION", "BATTLE PASS", "BUNDLE", "PAYMENT"
+  ],
+  "screens": [
+    {"name": "after_action_report", "if_seen": ["AFTER ACTION REPORT", "DEFEAT"], "in_match": true, "match_result": "defeat"},
+    {"name": "after_action_report", "if_seen": ["AFTER ACTION REPORT", "VICTORY"], "in_match": true, "match_result": "victory"},
+    {"name": "after_action_report", "if_seen": ["AFTER ACTION REPORT", "TIE"], "in_match": true, "match_result": "tie"},
+    {"name": "winners_circle_defeat", "if_seen": ["WINNER'S CIRCLE", "DEFEAT"], "in_match": true, "match_result": "defeat"},
+    {"name": "winners_circle_victory", "if_seen": ["WINNER'S CIRCLE", "VICTORY"], "in_match": true, "match_result": "victory"},
+    {"name": "winners_circle_tie", "if_seen": ["WINNER'S CIRCLE", "TIE"], "in_match": true, "match_result": "tie"},
+    {"name": "winners_circle", "if_seen": ["WINNER'S CIRCLE"], "in_match": true, "match_result": "over"},
+    {"name": "defeat", "if_seen": ["DEFEAT"], "in_match": true, "match_result": "defeat"},
+    {"name": "victory", "if_seen": ["VICTORY"], "in_match": true, "match_result": "victory"},
+    {"name": "tie", "if_seen": ["TIE"], "banner": "TIE", "in_match": true, "match_result": "tie"},
+    {"name": "best_play", "if_seen": ["BEST PLAY"], "in_match": true},
+    {"name": "progression", "if_seen": ["PROGRESSION", "DISMISS"], "press": "ESC", "match_result": "over"},
+    {
+      "name": "loadouts_default",
+      "if_seen": ["LOADOUTS", "DEFAULT", "ENFORCER", "RECON", "STRATEGIST"],
+      "click": "ENFORCER",
+      "click_leftmost": true,
+      "click_delay": 0,
+      "pre_match": true
+    },
+    {
+      "name": "loadouts_custom",
+      "if_seen": ["LOADOUTS", "CUSTOM", "DEFAULT", "EDIT LOADOUT"],
+      "click": "DEFAULT",
+      "click_right_of": "CUSTOM",
+      "click_delay": 0,
+      "pre_match": true
+    },
+    {"name": "kicked", "if_seen": ["NOTICE", "KICKED FOR INACTIVITY"], "click": "EXIT", "pre_match": true, "match_result": "kicked"},
+    {"name": "killcam", "if_seen": ["KILLCAM", "KILLED BY"], "in_match": true},
+    {"name": "loading_map", "if_seen": ["LOADING MAP"], "pre_match": true, "in_match": true},
+    {"name": "match_lobby", "if_seen": ["VOTING IN PROGRESS"], "pre_match": true, "in_match": true},
+    {"name": "match_lobby", "if_seen": ["WAITING", "LOADING LEVEL"], "pre_match": true, "in_match": true},
+    {"name": "match_lobby", "if_seen": ["MATCH BEGINNING IN"], "pre_match": true, "in_match": true},
+    {"name": "after_action_report", "if_seen": ["AFTER ACTION REPORT"], "in_match": true, "match_result": "over"},
+    {
+      "name": "searching",
+      "if_seen": ["SEARCHING FOR A MATCH"],
+      "in_match": true,
+      "pre_match": true,
+      "match_result": "left"
+    },
+    {
+      "name": "quick_play_face_off",
+      "if_seen": ["MULTIPLAYER", "QUICK PLAY", "FACE OFF MOSHPIT"],
+      "click": "FACE OFF MOSHPIT",
+      "require_click_target": true,
+      "click_delay": 0,
+      "pre_match": true
+    },
+    {
+      "name": "quick_play",
+      "if_seen": ["MULTIPLAYER", "QUICK PLAY", "FIND A MATCH"],
+      "click": "FIND A MATCH",
+      "click_delay": 0,
+      "pre_match": true
+    },
+    {
+      "name": "multiplayer_lobby",
+      "if_seen": ["BLACK OPS 6", "MULTIPLAYER", "LOBBY", "FIND A MATCH"],
+      "click": "FIND A MATCH",
+      "click_delay": 0,
+      "pre_match": true,
+      "match_result": "left"
+    }
+  ]
+}
